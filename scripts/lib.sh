@@ -11,6 +11,7 @@ STATE_DIR=${STATE_DIR:-/var/lib/homelab}
 # новая метка у сервиса медиастека пересоздала бы его контейнер.
 # shellcheck disable=SC2034 # используется в скриптах, которые подключают lib.sh
 STACKS=(
+  "platform auto $HOMELAB_ENV"
   "apps auto $HOMELAB_ENV"
   "media nightly $SRV_DIR/media/.env"
 )

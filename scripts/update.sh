@@ -78,8 +78,12 @@ verify() {
 }
 
 update_stack() {
-  local stack=$1 env_file=$2 svc old_id new_id result report=() failed=0
-  if ! compose "$stack" "$env_file" pull --quiet 2>"$STATE_DIR/pull-$stack.err"; then
+  local stack=$1 env_file=$2 svc old_id new_id result report=() failed=0 existing=()
+  # Скачиваются образы только тех сервисов, у которых уже есть контейнер. Сервис, описанный в compose,
+  # но ещё не перенесённый на сервер, может не иметь образа в ghcr, и pull всего стека падал бы.
+  mapfile -t existing < <(compose "$stack" "$env_file" ps -a --services)
+  [[ ${#existing[@]} -gt 0 ]] || return 0
+  if ! compose "$stack" "$env_file" pull --quiet "${existing[@]}" 2>"$STATE_DIR/pull-$stack.err"; then
     fail_once "pull-$stack" "Стек $stack: не удалось скачать образы. $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
     return 0
   fi

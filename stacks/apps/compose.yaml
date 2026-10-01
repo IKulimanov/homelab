@@ -9,6 +9,8 @@ x-app: &app
   logging:
     driver: local
     options: { max-size: 10m, max-file: "3" }
+  # Общая сеть со стеком platform: боты ходят в llm-gateway по имени. Её создаёт install.sh.
+  networks: [homelab]
 
 services:
   budget-bot:
@@ -20,3 +22,35 @@ services:
       BOT_DB: /data/budget.db
     volumes:
       - /srv/budget-bot/data:/data
+
+  wellbeing-bot:
+    <<: *app
+    image: ghcr.io/ikulimanov/wellbeing-bot:${WELLBEING_BOT_TAG:-main}
+    container_name: wellbeing-bot
+    env_file: /srv/wellbeing-bot/.env
+    environment:
+      BOT_DB: /data/wellbeing.db
+    volumes:
+      - /srv/wellbeing-bot/data:/data
+
+  nutrition-assistant:
+    <<: *app
+    image: ghcr.io/ikulimanov/nutrition-assistant:${NUTRITION_ASSISTANT_TAG:-main}
+    container_name: nutrition-assistant
+    env_file: /srv/nutrition-assistant/.env
+    command: ["-config", "/etc/nutrition-assistant/config.yaml"]
+    volumes:
+      - /srv/nutrition-assistant/data:/data
+      # После правки config.yaml: docker restart nutrition-assistant.
+      - /srv/nutrition-assistant/config.yaml:/etc/nutrition-assistant/config.yaml:ro
+      # Свои копии бот кладёт в backup_dir: /backup/nutrition-assistant. rslave — чтобы сетевой том,
+      # смонтированный после старта контейнера, тоже был виден внутри.
+      - type: bind
+        source: /mnt/backup
+        target: /backup
+        bind:
+          propagation: rslave
+
+networks:
+  homelab:
+    external: true

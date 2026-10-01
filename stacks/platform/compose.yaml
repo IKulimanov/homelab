@@ -1,0 +1,69 @@
+# Служебные программы homelab: ops-bot (алерты и команды в Telegram) и llm-gateway (учёт и лимиты LLM).
+# Образы собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /opt/homelab/.env.
+name: platform
+
+x-svc: &svc
+  restart: unless-stopped
+  # Шлюз ждёт начатые запросы к модели до 60 с, ops-bot — остановку контейнера по команде.
+  stop_grace_period: 90s
+  logging:
+    driver: local
+    options: { max-size: 10m, max-file: "3" }
+  networks: [homelab]
+
+services:
+  llm-gateway:
+    <<: *svc
+    image: ghcr.io/ikulimanov/llm-gateway:${LLM_GATEWAY_TAG:-main}
+    container_name: llm-gateway
+    # GEMINI_API_KEY и ключи ботов LLM_KEY_<ИМЯ>.
+    env_file: /srv/llm-gateway/.env
+    environment:
+      TZ: ${TZ:-Asia/Bishkek}
+      LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
+      LLM_CONFIG: /config/llm-gateway.yaml
+      LLM_DB: /data/llm-gateway.db
+    volumes:
+      - /srv/llm-gateway/data:/data
+      # Каталог, а не файл: git pull заменяет файл новым, и привязка к одному файлу осталась бы на старом.
+      - ./config:/config:ro
+    healthcheck:
+      test: ["CMD", "/app", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  ops-bot:
+    <<: *svc
+    image: ghcr.io/ikulimanov/ops-bot:${OPS_BOT_TAG:-main}
+    container_name: ops-bot
+    # Группа docker хоста: без неё пользователь nonroot не откроет сокет. Значение пишет install.sh.
+    group_add: ["${DOCKER_GID}"]
+    environment:
+      TZ: ${TZ:-Asia/Bishkek}
+      OPS_BOT_TOKEN: ${OPS_BOT_TOKEN}
+      OPS_CHAT_ID: ${OPS_CHAT_ID}
+      LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
+      HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
+      OPS_DISKS: ${OPS_DISKS:-/,/data,/mnt/backup}
+      OPS_HOSTFS: /hostfs
+      OPS_TRIGGER: /trigger/update
+      OPS_DB: /data/ops.db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/ops-bot/data:/data
+      # Файл-триггер команды /update; его ждёт homelab-update.path на хосте.
+      - /srv/ops-bot/trigger:/trigger
+      # Корень хоста только для чтения: по нему считается место на дисках. rslave — чтобы был виден
+      # и /mnt/backup, если сетевой том смонтируется после старта контейнера.
+      - type: bind
+        source: /
+        target: /hostfs
+        read_only: true
+        bind:
+          propagation: rslave
+
+networks:
+  homelab:
+    external: true

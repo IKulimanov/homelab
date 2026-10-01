@@ -1,0 +1,43 @@
+# Образы ops-bot и llm-gateway. Собираются только при изменении Go-кода: правка compose или docs
+# не должна менять образ, иначе update.sh пересоздавал бы контейнеры на каждый push.
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - cmd/**
+      - internal/**
+      - go.mod
+      - go.sum
+      - Dockerfile
+      - .github/workflows/build.yml
+      - .github/workflows/go-service.yml
+  pull_request:
+    paths:
+      - cmd/**
+      - internal/**
+      - go.mod
+      - go.sum
+      - Dockerfile
+      - .github/workflows/build.yml
+      - .github/workflows/go-service.yml
+
+jobs:
+  ops-bot:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/go-service.yml
+    with:
+      image: ops-bot
+      cmd: ./cmd/ops-bot
+
+  llm-gateway:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/go-service.yml
+    with:
+      image: llm-gateway
+      cmd: ./cmd/llm-gateway

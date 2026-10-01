@@ -13,6 +13,7 @@ LEGACY_UNITS=(budget-bot.service wellbeing-bot.service nutrition-assistant.servi
   monitor-check.service monitor-check.timer monitor-report.service monitor-report.timer)
 LEGACY_PATHS=(/opt/budget-bot /opt/wellbeing-bot /opt/monitor
   /usr/local/bin/nutrition-assistant /etc/nutrition-assistant /var/lib/nutrition-assistant
+  /usr/local/bin/wellbeing-backup.sh
   /etc/budget-bot.env /etc/wellbeing-bot.env /var/backups/budget-bot /var/backups/wellbeing-bot)
 LEGACY_USERS=(budgetbot wellbeingbot nutrition-assistant)
 # Контейнеры, которые homelab знает. Всё прочее попадёт в раздел «неизвестное».
