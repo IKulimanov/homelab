@@ -1,0 +1,7 @@
+[Unit]
+Description=homelab: ежедневная копия баз SQLite
+After=local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/homelab/scripts/backup.sh --all

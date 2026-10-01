@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh
+      - name: compose-файлы читаются
+        run: |
+          cp env/homelab.env.example /tmp/homelab.env
+          cp env/media.env.example /tmp/media.env
+          sudo mkdir -p /srv/budget-bot && sudo touch /srv/budget-bot/.env
+          docker compose -f stacks/apps/compose.yaml --env-file /tmp/homelab.env config -q
+          docker compose -f stacks/media/compose.yaml --env-file /tmp/media.env config -q

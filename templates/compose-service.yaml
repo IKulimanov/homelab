@@ -1,0 +1,13 @@
+# Блок нового сервиса для stacks/apps/compose.yaml. Заменить SERVICE_NAME и SERVICE_TAG.
+# Тег SERVICE_TAG добавить пустым в env/homelab.env.example: через него делается откат.
+
+  SERVICE_NAME:
+    <<: *app
+    image: ghcr.io/ikulimanov/SERVICE_NAME:${SERVICE_TAG:-main}
+    container_name: SERVICE_NAME
+    env_file: /srv/SERVICE_NAME/.env
+    environment:
+      # Путь к базе внутри контейнера: каталог /data смонтирован с хоста.
+      APP_DB: /data/SERVICE_NAME.db
+    volumes:
+      - /srv/SERVICE_NAME/data:/data

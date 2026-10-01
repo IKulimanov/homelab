@@ -1,0 +1,305 @@
+---
+# =============================================================
+#  🎬 Media Stack — Jellyfin + *arr + qBittorrent + Telegram
+#  GPU:      NVIDIA (аппаратное транскодирование)
+#  VPN:      отсутствует (можно добавить позже)
+#  Alerts:   Notifiarr → Telegram (полный мониторинг)
+# =============================================================
+#
+#  СТРУКТУРА КАТАЛОГОВ (создаётся скриптом scripts/init.sh):
+#
+#  /data
+#  ├── torrents/
+#  │   ├── movies/        ← qBittorrent категория "radarr"
+#  │   └── tv/            ← qBittorrent категория "sonarr"
+#  ├── media/
+#  │   ├── movies/        ← Radarr root folder  (hardlink ← torrents/movies)
+#  │   └── tv/            ← Sonarr root folder  (hardlink ← torrents/tv)
+#  └── configs/
+#      ├── jellyfin/
+#      ├── sonarr/
+#      ├── radarr/
+#      ├── prowlarr/
+#      ├── qbittorrent/
+#      ├── jellyseerr/
+#      ├── bazarr/
+#      └── notifiarr/
+#
+#  ⚠️  HARDLINK ПРАВИЛО: все *arr-контейнеры монтируют /data как единый корень.
+#      Это единственное условие работы hardlink без копирования файлов.
+# =============================================================
+
+name: media-stack
+
+services:
+
+  # ╔══════════════════════════════════════════════════════════╗
+  # ║  ЗАГРУЗКА                                                ║
+  # ╚══════════════════════════════════════════════════════════╝
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - WEBUI_PORT=8080
+    volumes:
+      - ${CONFIG_ROOT}/qbittorrent:/config
+      # Только папка torrents — qBittorrent не нужен доступ к /media
+      - ${DATA_ROOT}/torrents:/data/torrents
+    ports:
+      - 8080:8080    # WebUI
+      - 6881:6881    # Torrent TCP
+      - 6881:6881/udp
+    mem_limit: 1g          # ← правильный синтаксис для compose
+    memswap_limit: 1g      # ← отключает своп сверх лимита
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ╔══════════════════════════════════════════════════════════╗
+  # ║  ИНДЕКСАТОРЫ                                             ║
+  # ╚══════════════════════════════════════════════════════════╝
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/prowlarr:/config
+    ports:
+      - 9696:9696
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ╔══════════════════════════════════════════════════════════╗
+  # ║  МЕНЕДЖЕРЫ МЕДИА (*arr)                                  ║
+  # ╚══════════════════════════════════════════════════════════╝
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    depends_on:
+      prowlarr:
+        condition: service_healthy
+      qbittorrent:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/sonarr:/config
+      # ✅ ЕДИНЫЙ /data — hardlink между /data/torrents/tv и /data/media/tv работает
+      - ${DATA_ROOT}:/data
+    ports:
+      - 8989:8989
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    depends_on:
+      prowlarr:
+        condition: service_healthy
+      qbittorrent:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/radarr:/config
+      # ✅ ЕДИНЫЙ /data — hardlink между /data/torrents/movies и /data/media/movies работает
+      - ${DATA_ROOT}:/data
+    ports:
+      - 7878:7878
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/bazarr:/config
+      # Только чтение готовых медиафайлов для привязки субтитров
+      - ${DATA_ROOT}/media:/data/media
+    ports:
+      - 6767:6767
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6767"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ╔══════════════════════════════════════════════════════════╗
+  # ║  МЕДИАСЕРВЕР                                             ║
+  # ╚══════════════════════════════════════════════════════════╝
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      # NVIDIA NVENC/NVDEC аппаратное транскодирование
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    volumes:
+      - ${CONFIG_ROOT}/jellyfin:/config
+      # Только чтение — Jellyfin не должен изменять файлы
+      - ${DATA_ROOT}/media:/data/media:ro
+    ports:
+      - 8096:8096     # HTTP
+      - 8920:8920     # HTTPS
+      - 7359:7359/udp # Авто-обнаружение в локальной сети
+      - 1900:1900/udp # DLNA (опционально)
+    mem_limit: 1g
+    memswap_limit: 1g
+    # NVIDIA GPU — передача устройства в контейнер
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8096/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    container_name: jellyseerr
+    depends_on:
+      jellyfin:
+        condition: service_healthy
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/jellyseerr:/app/config
+    ports:
+      - 5055:5055
+    mem_limit: 1g
+    memswap_limit: 1g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5055"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}
+    ports:
+      - 8191:8191
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+  # ╔══════════════════════════════════════════════════════════╗
+  # ║  МОНИТОРИНГ И УВЕДОМЛЕНИЯ                                ║
+  # ╚══════════════════════════════════════════════════════════╝
+
+  # Notifiarr — универсальный агент уведомлений
+  # Интегрируется с Sonarr/Radarr/Prowlarr и шлёт в Telegram
+  # Требует бесплатный аккаунт на notifiarr.com
+  notifiarr:
+    image: golift/notifiarr:latest
+    container_name: notifiarr
+    hostname: ${HOSTNAME:-mediaserver}
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${CONFIG_ROOT}/notifiarr:/config
+      # Доступ к Docker socket для мониторинга контейнеров
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Доступ к /tmp для временных файлов
+      - /tmp:/tmp
+    ports:
+      - 5454:5454
+    mem_limit: 500m
+    memswap_limit: 500m
+    restart: unless-stopped
+
+  # Watchtower — автообновление образов с уведомлением в Telegram
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    mem_limit: 500m
+    memswap_limit: 500m
+    environment:
+      - TZ=${TZ}
+      - DOCKER_API_VERSION=1.44
+      - WATCHTOWER_CLEANUP=true              # удалять старые образы после обновления
+      - WATCHTOWER_INCLUDE_STOPPED=false     # не трогать остановленные контейнеры
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *     # проверка обновлений в 4:00 ночи
+      - WATCHTOWER_NOTIFICATIONS=shoutrrr
+      # Telegram уведомления о обновлениях контейнеров
+      # Формат: telegram://BOT_TOKEN@telegram?channels=CHAT_ID
+      - WATCHTOWER_NOTIFICATION_URL=telegram://${TELEGRAM_BOT_TOKEN}@telegram?channels=${TELEGRAM_CHAT_ID}
+#      - WATCHTOWER_NOTIFICATION_TEMPLATE=💧 Watchtower обновил контейнеры на {{ .Host }}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+# ╔══════════════════════════════════════════════════════════╗
+# ║  СЕТЬ                                                    ║
+# ╚══════════════════════════════════════════════════════════╝
+networks:
+  default:
+    name: media-stack
+    driver: bridge

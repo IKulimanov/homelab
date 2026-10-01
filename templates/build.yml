@@ -1,0 +1,19 @@
+# Копируется в репозиторий сервиса как .github/workflows/build.yml.
+# Push в main: тесты, сборка образа и публикация в ghcr.io; сервер подхватит его сам.
+# Pull request: только тесты и пробная сборка.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    uses: IKulimanov/homelab/.github/workflows/go-service.yml@main
+    with:
+      image: SERVICE_NAME
+      cmd: ./cmd/bot

@@ -1,0 +1,66 @@
+# Общая сборка Go-сервисов homelab. Вызывается из репозитория сервиса (templates/build.yml).
+# Теги образа: main — последняя сборка, sha-<7> — конкретный коммит, по нему делается откат.
+name: go-service
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Имя образа в ghcr.io, совпадает с именем сервиса
+        type: string
+        required: true
+      cmd:
+        description: Пакет main для go build
+        type: string
+        default: ./cmd/bot
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Тесты
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Имя образа
+        id: meta
+        run: |
+          owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/${{ inputs.image }}" >> "$GITHUB_OUTPUT"
+          echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          build-args: |
+            VERSION=sha-${{ steps.meta.outputs.short }}
+            CMD=${{ inputs.cmd }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:main
+            ${{ steps.meta.outputs.image }}:sha-${{ steps.meta.outputs.short }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

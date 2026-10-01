@@ -1,0 +1,22 @@
+# Свои боты. Образы собирает GitHub Actions при push в main, обновляет scripts/update.sh.
+# Секреты — в /srv/<svc>/.env, база — в /srv/<svc>/data.
+name: apps
+
+x-app: &app
+  restart: unless-stopped
+  # Docker по умолчанию ждёт 10 с и убивает процесс; ботам нужно время дописать в базу.
+  stop_grace_period: 90s
+  logging:
+    driver: local
+    options: { max-size: 10m, max-file: "3" }
+
+services:
+  budget-bot:
+    <<: *app
+    image: ghcr.io/ikulimanov/budget-bot:${BUDGET_BOT_TAG:-main}
+    container_name: budget-bot
+    env_file: /srv/budget-bot/.env
+    environment:
+      BOT_DB: /data/budget.db
+    volumes:
+      - /srv/budget-bot/data:/data

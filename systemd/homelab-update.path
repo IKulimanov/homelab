@@ -1,0 +1,9 @@
+[Unit]
+Description=homelab: ждать запроса на обновление от ops-bot
+
+[Path]
+PathExists=/srv/ops-bot/trigger/update
+Unit=homelab-update-now.service
+
+[Install]
+WantedBy=multi-user.target

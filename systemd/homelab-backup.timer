@@ -1,0 +1,9 @@
+[Unit]
+Description=homelab: копия баз в 3:30, до ночного обновления
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

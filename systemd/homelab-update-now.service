@@ -1,0 +1,11 @@
+# Запускается по файлу-триггеру от ops-bot (команда /update). Файл удаляется до запуска,
+# иначе homelab-update.path сработает снова.
+[Unit]
+Description=homelab: обновление всех стеков по запросу
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/rm -f /srv/ops-bot/trigger/update
+ExecStart=/opt/homelab/scripts/update.sh all

@@ -1,0 +1,9 @@
+[Unit]
+Description=homelab: ночное обновление в 4:00, как раньше делал Watchtower
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
