@@ -26,11 +26,14 @@ archive() {  # archive <имя> <путь>...
 }
 ```
 
+Порядок: платформа (служебный бот и шлюз) → `budget-bot` → медиастек → `wellbeing-bot` → `nutrition-assistant` →
+боты на шлюз → `simply-monitoring` → уборка.
+
 ## Шаг 0. Подготовка и опись
 
-Установка homelab: [server-setup.md](server-setup.md). После неё на сервере есть `/opt/homelab` и работают таймеры
-обновления и бэкапа. Старым службам они не мешают: в `stacks/apps` пока нет ни одного запущенного контейнера,
-а медиастек без `/srv/media/.env` обновление пропускает.
+Установка homelab: [server-setup.md](server-setup.md). После неё на сервере есть `/opt/homelab`, сеть Docker
+`homelab` и таймеры обновления и бэкапа. Старым службам они не мешают: в `stacks/apps` пока нет ни одного
+запущенного контейнера, а медиастек без `/srv/media/.env` обновление пропускает.
 
 Опись:
 
@@ -42,10 +45,40 @@ mkdir -p /mnt/backup/legacy
 По выводу нужно сверить:
 - раздел «Docker: где лежит compose медиастека» — путь к старому клону `media-server`, дальше он `<MEDIA_DIR>`;
 - раздел «неизвестные контейнеры» и «прочие службы» — пусто или только то, что ты ставил сам и знаешь;
-- раздел «/mnt/backup» — том смонтирован; если нет, сначала починить монтирование, без него бэкапы не делаются;
+- раздел «/mnt/backup» — том смонтирован; если нет, сначала починить монтирование, без него бэкапы не делаются.
+  Записать тип тома (`cifs` или `ext4`) и опции: они нужны в шаге 5;
 - раздел «logind» — `HandleLidSwitch=ignore` на месте.
 
-## Шаг 1. budget-bot
+## Шаг 1. Платформа: ops-bot и llm-gateway
+
+Образы `ops-bot` и `llm-gateway` собирает Actions в репозитории `homelab` после push в `main`.
+
+1. Настройки. `install.sh` уже создал `/opt/homelab/.env` с `DOCKER_GID` и `LLM_ADMIN_TOKEN`. Вписать туда
+   `OPS_BOT_TOKEN`, `OPS_CHAT_ID` (см. server-setup, шаг 4), по желанию `HEALTHCHECK_URL`
+   ([monitoring.md](monitoring.md)). В `/srv/llm-gateway/.env` вписать `GEMINI_API_KEY` — настоящий ключ из
+   AI Studio. Без него шлюз не запустится.
+
+2. Запуск. Медиастек и старые боты это не затрагивает:
+
+   ```bash
+   cd /opt/homelab && docker compose -f stacks/platform/compose.yaml --env-file .env up -d
+   docker logs ops-bot          # «ops-bot запущен», в Telegram пришло «ops-bot запущен, версия sha-…»
+   docker logs llm-gateway      # «шлюз запущен»
+   docker inspect -f '{{.State.Health.Status}}' llm-gateway    # healthy через полминуты
+   ```
+
+3. Проверка в Telegram: `/status` показывает контейнеры медиастека и `platform`, `/stats` — температуру и диски.
+   Если температура «нет данных», см. [monitoring.md](monitoring.md).
+
+4. Баланс Gemini. Посмотреть остаток в AI Studio → Billing и записать его: `/balance 17.40`.
+
+Шлюзом пока никто не пользуется: боты переключаются на него в шаге 6.
+
+Откат: `docker stop ops-bot llm-gateway`. Старые службы от платформы не зависят.
+
+С этого момента `ops-bot` работает параллельно с `simply-monitoring`. Неделю сверять алерты обоих, затем шаг 7.
+
+## Шаг 2. budget-bot
 
 Простой бота — минута-две, пока переносится база.
 
@@ -55,12 +88,13 @@ mkdir -p /mnt/backup/legacy
 
 Перенос настроек: значения `BOT_TOKEN`, `BOT_TIMEZONE`, `BOT_REMINDER_TIME`, `GEMINI_API_KEY`, `GEMINI_MODEL`
 из `/etc/budget-bot.env` вписать в `/srv/budget-bot/.env`. `BOT_DB` не переносится, путь к базе задаёт compose.
+`GEMINI_BASE_URL` пока пустой.
 
 ```bash
 diff <(grep -v '^#' /etc/budget-bot.env | grep . | sort) <(grep -v '^#' /srv/budget-bot/.env | grep . | sort)
 ```
 
-В выводе должна остаться только строка `BOT_DB`.
+В выводе должна остаться только строка `BOT_DB` и пустая `GEMINI_BASE_URL=`.
 
 Образ должен быть в ghcr: в репозитории `budget-bot` прошла сборка в Actions после push в `main`.
 
@@ -97,7 +131,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 
 Дальше бот обновляется сам: push в `main` → сборка → через 5–10 минут сообщение служебного бота.
 
-## Шаг 2. Медиастек — без остановки
+## Шаг 3. Медиастек — без остановки
 
 Цель: тот же compose-проект `media-stack` начинает управляться из `/opt/homelab/stacks/media`. Контейнеры не
 пересоздаются и не перезапускаются.
@@ -175,18 +209,122 @@ docker stop budget-bot && systemctl enable --now budget-bot
 Если хэши в пункте 3 так и не совпали, медиастек остаётся в старом каталоге, homelab его не трогает: без
 `/srv/media/.env` стек пропускается. Пересоздание контейнеров тогда делается в удобное время, по твоему решению.
 
-## Шаг 3. wellbeing-bot и nutrition-assistant
+## Шаг 4. wellbeing-bot
 
-То же, что шаг 1, после того как боты получат Dockerfile и блоки в `stacks/apps/compose.yaml` (веха 3 плана).
-Отличия `nutrition-assistant`:
-- настройки в `/etc/nutrition-assistant/env` и `/etc/nutrition-assistant/config.yaml`;
-  `config.yaml` переносится в `/srv/nutrition-assistant/config.yaml`, в нём `database_path: /data/nutrition.db`,
-  `backup_dir: /backup`;
-- база в `/var/lib/nutrition-assistant/`, перед переносом — `/admin backup` в боте.
+Сейчас: служба `wellbeing-bot.service` от пользователя `wellbeingbot`, программа и база в `/opt/wellbeing-bot`,
+настройки в `/etc/wellbeing-bot.env`, копии делает `/usr/local/bin/wellbeing-backup.sh` из cron root в 4:00.
 
-## Шаг 4. simply-monitoring
+```bash
+/opt/homelab/scripts/install.sh service wellbeing-bot
+```
 
-После того как `ops-bot` неделю шлёт алерты параллельно со старым мониторингом (веха 4 плана):
+Из `/etc/wellbeing-bot.env` перенести в `/srv/wellbeing-bot/.env` значения `BOT_TOKEN`, `ADMIN_ID`,
+`GEMINI_API_KEY`, `GEMINI_MODEL`, `BOT_TIMEZONE`, `MAX_USERS`. `BOT_DB` не переносится.
+
+```bash
+diff <(grep -v '^#' /etc/wellbeing-bot.env | grep . | sort) <(grep -v '^#' /srv/wellbeing-bot/.env | grep . | sort)
+docker pull ghcr.io/ikulimanov/wellbeing-bot:main
+```
+
+Переключение:
+
+```bash
+systemctl stop wellbeing-bot
+/usr/local/bin/wellbeing-backup.sh /opt/wellbeing-bot/wellbeing.db /mnt/backup/legacy/wellbeing-bot 365
+ls /opt/wellbeing-bot/       # wellbeing.db-wal и -shm быть не должно
+install -m 0600 -o 65532 -g 65532 /opt/wellbeing-bot/wellbeing.db /srv/wellbeing-bot/data/wellbeing.db
+cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file .env up -d wellbeing-bot
+docker logs -f wellbeing-bot
+```
+
+Проверка в боте, затем `systemctl disable wellbeing-bot`. Откат — как у `budget-bot`:
+`docker stop wellbeing-bot && systemctl enable --now wellbeing-bot`.
+
+## Шаг 5. nutrition-assistant
+
+Сейчас: программа `/usr/local/bin/nutrition-assistant`, служба от пользователя `nutrition-assistant`, секреты
+в `/etc/nutrition-assistant/env`, настройки в `/etc/nutrition-assistant/config.yaml`, база в
+`/var/lib/nutrition-assistant/nutrition.db`. Бот сам делает копии в `/mnt/backup/nutrition-assistant` в 03:30
+и сам удаляет старые. В контейнере это продолжается: `/mnt/backup` смонтирован в `/backup`.
+
+1. Доступ контейнера к `/mnt/backup`. Контейнер пишет от uid 65532.
+
+   Если том `ext4` (или другой локальный), хватит `install.sh` из пункта 2: он сделает владельцем каталога
+   `/mnt/backup/nutrition-assistant` uid 65532.
+
+   Если том `cifs` с опциями `uid=nutrition-assistant,gid=nutrition-assistant,dir_mode=0700,file_mode=0600`,
+   владельца задают опции монтирования, и их нужно поменять на `uid=65532,gid=65532`. Root пишет на такой том и
+   так. Делать не в 3:30–4:00, когда идут копии; медиастек `/mnt/backup` не использует:
+
+   ```bash
+   cp /etc/fstab /etc/fstab.bak-$(date +%F)
+   nano /etc/fstab           # uid=nutrition-assistant,gid=nutrition-assistant → uid=65532,gid=65532
+   findmnt --verify
+   systemctl daemon-reload
+   umount /mnt/backup && mount /mnt/backup
+   findmnt /mnt/backup
+   ```
+
+   Старая служба до своего отключения в пункте 4 копий больше не сделает: том теперь не её. Это не страшно, копия
+   будет снята в пункте 3.
+
+2. Каталоги и настройки:
+
+   ```bash
+   /opt/homelab/scripts/install.sh service nutrition-assistant
+   ```
+
+   Он создаёт `/srv/nutrition-assistant/config.yaml` из `/etc/nutrition-assistant/config.yaml` и меняет в нём
+   два пути на пути внутри контейнера: `database_path: /data/nutrition.db`, `backup_dir: /backup/nutrition-assistant`.
+   В конце он пишет, может ли uid 65532 писать в каталог копий. Если не может — вернуться к пункту 1.
+
+   Секреты: из `/etc/nutrition-assistant/env` перенести `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, а также
+   `ANTHROPIC_API_KEY` и `OPENAI_API_KEY`, если они там есть, в `/srv/nutrition-assistant/.env`.
+
+   ```bash
+   diff /etc/nutrition-assistant/config.yaml /srv/nutrition-assistant/config.yaml   # только два пути
+   docker pull ghcr.io/ikulimanov/nutrition-assistant:main
+   ```
+
+3. Переключение. Остановка службы занимает до 40 секунд:
+
+   ```bash
+   systemctl stop nutrition-assistant
+   sqlite3 /var/lib/nutrition-assistant/nutrition.db ".backup '/mnt/backup/legacy/nutrition-$(date +%F).db'"
+   ls /var/lib/nutrition-assistant/     # nutrition.db-wal и -shm быть не должно
+   install -m 0600 -o 65532 -g 65532 /var/lib/nutrition-assistant/nutrition.db /srv/nutrition-assistant/data/nutrition.db
+   cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file .env up -d nutrition-assistant
+   docker logs -f nutrition-assistant
+   ```
+
+4. Проверка: записать еду в боте; в боте `/admin backup` — в `/mnt/backup/nutrition-assistant` появилась новая
+   копия. Затем `systemctl disable nutrition-assistant`.
+
+   Откат: `docker stop nutrition-assistant && systemctl enable --now nutrition-assistant`. Если в пункте 1 менялись
+   опции `cifs`, для отката их нужно вернуть и перемонтировать том.
+
+## Шаг 6. Боты на шлюз
+
+Порядок для каждого бота. Шлюз выдаёт боту свой ключ, а настоящий ключ Gemini остаётся только у шлюза:
+
+```bash
+/opt/homelab/scripts/install.sh llm-key budget-bot
+/opt/homelab/scripts/update.sh auto      # пересоздаёт llm-gateway и бота с новыми ключами
+```
+
+Скрипт записывает `LLM_KEY_BUDGET_BOT` в `/srv/llm-gateway/.env`, а в `/srv/budget-bot/.env` —
+`GEMINI_API_KEY` с тем же значением и `GEMINI_BASE_URL=http://llm-gateway:8080`. У `nutrition-assistant` адрес
+записывается в `config.yaml`, `gemini.base_url`.
+
+Проверка: вызвать в боте то, что ходит в Gemini (у `budget-bot` — отчёт за месяц), затем `/usage` в служебном
+боте показывает вызов и стоимость. Подробно — [llm.md](llm.md).
+
+Откат одного бота: в `/srv/<svc>/.env` вернуть настоящий ключ, `GEMINI_BASE_URL` очистить, затем
+`scripts/update.sh auto`.
+
+## Шаг 7. simply-monitoring
+
+После того как `ops-bot` неделю шлёт алерты параллельно со старым мониторингом:
 
 ```bash
 systemctl disable --now monitor-check.timer monitor-report.timer
@@ -201,12 +339,12 @@ systemctl daemon-reload && systemctl reset-failed
 ```
 
 **Не трогать:** `/etc/systemd/logind.conf` (настройки крышки, без них ноутбук уснёт) и модули датчиков, которые
-добавил `sensors-detect`. Пакеты `lm-sensors`, `smartmontools`, `acpi`, `bc`, `nvme-cli` можно оставить: они ничего
-не запускают. `sqlite3` нужен `backup.sh`.
+добавил `sensors-detect`: без них `ops-bot` не видит температуру. Пакеты `lm-sensors`, `smartmontools`, `acpi`, `bc`,
+`nvme-cli` можно оставить: они ничего не запускают. `sqlite3` нужен `backup.sh`.
 
-## Шаг 5. Уборка ботов — через неделю после переключения каждого
+## Шаг 8. Уборка ботов — через неделю после переключения каждого
 
-Пример для `budget-bot`. Для `wellbeing-bot` пути те же с другим именем.
+`budget-bot`:
 
 ```bash
 systemctl is-enabled budget-bot      # disabled — иначе не начинать
@@ -218,19 +356,37 @@ rm -rf /opt/budget-bot /etc/budget-bot.env
 userdel budgetbot
 ```
 
-Строки старого `backup.sh` в cron root:
+`wellbeing-bot`:
+
+```bash
+systemctl is-enabled wellbeing-bot   # disabled
+docker inspect -f '{{.State.Running}}' wellbeing-bot
+
+archive wellbeing-bot /opt/wellbeing-bot /etc/wellbeing-bot.env /etc/systemd/system/wellbeing-bot.service \
+  /usr/local/bin/wellbeing-backup.sh
+rm /etc/systemd/system/wellbeing-bot.service && systemctl daemon-reload && systemctl reset-failed
+rm -rf /opt/wellbeing-bot /etc/wellbeing-bot.env /usr/local/bin/wellbeing-backup.sh
+userdel wellbeingbot
+```
+
+Строки старых копий в cron root. Удалять вместе со скриптом `wellbeing-backup.sh`, иначе cron будет падать каждую ночь:
 
 ```bash
 crontab -l > /mnt/backup/legacy/crontab-root-$(date +%F).txt
-crontab -e        # удалить строки с /opt/budget-bot/backup.sh и /opt/wellbeing-bot/backup.sh
+crontab -e        # удалить строки с /opt/budget-bot/backup.sh и /usr/local/bin/wellbeing-backup.sh
 ```
 
-Копии теперь делает `homelab-backup.timer` в 3:30. Старые копии в `/mnt/backup/budget-bot` (имена
-`budget-ГГГГ-ММ-ДД.db.gz`) остаются, новые лежат рядом.
+Копии теперь делает `homelab-backup.timer` в 3:30. Старые копии в `/mnt/backup/budget-bot` и
+`/mnt/backup/wellbeing-bot` остаются, новые (`<база>-ГГГГ-ММ-ДД.db.gz`) лежат рядом.
 
-`nutrition-assistant`:
+`nutrition-assistant`. Сначала проверить `grep credentials /etc/fstab`: если файл учётных данных `cifs` лежит
+в `/etc/nutrition-assistant/`, перенести его, например в `/etc/cifs-backup` с правами 0600, поправить путь в
+`credentials=` и проверить `findmnt --verify`. Иначе после удаления каталога том не смонтируется при перезагрузке.
 
 ```bash
+systemctl is-enabled nutrition-assistant   # disabled
+docker inspect -f '{{.State.Running}}' nutrition-assistant
+
 archive nutrition-assistant /usr/local/bin/nutrition-assistant /etc/nutrition-assistant \
   /var/lib/nutrition-assistant /etc/systemd/system/nutrition-assistant.service
 rm /etc/systemd/system/nutrition-assistant.service && systemctl daemon-reload && systemctl reset-failed
@@ -249,11 +405,7 @@ systemctl daemon-reload
 findmnt /mnt/backup       # том по-прежнему смонтирован
 ```
 
-Если на CIFS-томе были опции `uid=nutrition-assistant,gid=nutrition-assistant`, после `userdel` их нужно заменить
-на `uid=0,gid=0`: бэкапы homelab пишет root. Изменение применится при следующем монтировании, сейчас том работает
-как раньше.
-
-## Шаг 6. Итог
+## Шаг 9. Итог
 
 ```bash
 /opt/homelab/scripts/legacy-audit.sh
