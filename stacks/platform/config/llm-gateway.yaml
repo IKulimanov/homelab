@@ -1,0 +1,37 @@
+# Цены и лимиты llm-gateway. Шлюз перечитывает файл сам после git pull, перезапуск не нужен.
+# Ошибка в файле не ломает шлюз: он остаётся на прежней версии и пишет ошибку в лог (docker logs llm-gateway).
+# Ключи клиентов здесь не хранятся: они в /srv/llm-gateway/.env, переменные LLM_KEY_<ИМЯ>.
+
+# Доллары за миллион токенов, как в прайсе Google: https://ai.google.dev/gemini-api/docs/pricing
+# Размышления (thinking) оплачиваются как output. cache_read — цена токенов из неявного кэша.
+# Цены до 2026-12-31; с 2027-01-01 Google поднимает цену gemini-3.8-flash вдвое: 1.5, 7.5, 0.15.
+prices:
+  gemini-3.8-flash:
+    input: 0.75
+    output: 3.75
+    cache_read: 0.075
+  # Сверить с прайсом: budget-bot по умолчанию берёт эту модель.
+  gemini-2.5-flash:
+    input: 0.30
+    output: 2.50
+    cache_read: 0.03
+  # Для моделей, которых нет выше. Без этой строки расход по ним считался бы нулевым и не попадал в лимиты.
+  default:
+    input: 0.75
+    output: 3.75
+    cache_read: 0.075
+
+# Месячные лимиты в долларах. Исчерпан — шлюз отвечает 429 и в Google запрос не отправляет.
+# На 80 % и 100 % ops-bot присылает алерт. Месяц считается по TZ из /opt/homelab/.env.
+clients:
+  budget-bot:
+    monthly_limit_usd: 2
+  wellbeing-bot:
+    monthly_limit_usd: 3
+  nutrition-assistant:
+    monthly_limit_usd: 10
+
+total_monthly_limit_usd: 15
+
+# Алерт, когда расчётный остаток предоплаты ниже этой суммы.
+balance_alert_usd: 3
