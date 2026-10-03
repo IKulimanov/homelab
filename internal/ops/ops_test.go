@@ -72,6 +72,8 @@ type fixture struct {
 	llm     *fakeLLM
 	metrics *fakeMetrics
 	sent    []string
+	gifs    []string // «file_id|подпись»
+	gifErr  error
 	now     time.Time
 }
 
@@ -111,8 +113,15 @@ func newFixture(t *testing.T) *fixture {
 	}, Deps{
 		Docker: f.docker, LLM: f.llm, Metrics: f.metrics, Store: store,
 		Send: func(_ context.Context, text string) error { f.sent = append(f.sent, text); return nil },
-		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now:  func() time.Time { return f.now },
+		SendGIF: func(_ context.Context, id, caption string) error {
+			if f.gifErr != nil {
+				return f.gifErr
+			}
+			f.gifs = append(f.gifs, id+"|"+caption)
+			return nil
+		},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now: func() time.Time { return f.now },
 	})
 	return f
 }
@@ -279,7 +288,7 @@ func TestHostThresholdAndBattery(t *testing.T) {
 	}
 }
 
-func TestDailyAggregatesAndReportOnce(t *testing.T) {
+func TestAggregatesAndWeeklyReportOnce(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	for i, v := range []float64{40, 60, 80} {
@@ -301,22 +310,53 @@ func TestDailyAggregatesAndReportOnce(t *testing.T) {
 
 	f.takeSent()
 	f.metrics.snap.CPUTemp = host.Unknown // тики ниже не должны добавить замеров CPU
-	f.svc.cfg.ReportAt = "23:55"
-	f.now = time.Date(2026, 10, 1, 23, 55, 0, 0, time.UTC)
-	f.svc.Tick(ctx)
-	f.now = f.now.Add(time.Minute)
-	f.svc.Tick(ctx)
+	f.svc.cfg.Report = Schedule{Day: time.Sunday, At: "20:00"}
+	// 04.10.2026 — воскресенье. До 20:00 отчёта нет, в 20:00 — один, минутой позже — не второй.
+	for _, at := range []time.Time{
+		time.Date(2026, 10, 4, 19, 59, 0, 0, time.UTC),
+		time.Date(2026, 10, 4, 20, 0, 0, 0, time.UTC),
+		time.Date(2026, 10, 4, 20, 1, 0, 0, time.UTC),
+	} {
+		f.now = at
+		f.svc.Tick(ctx)
+	}
 	var reports int
 	for _, s := range f.takeSent() {
-		if strings.HasPrefix(s, "Отчёт за 01.10.2026") {
+		if strings.HasPrefix(s, "Отчёт за неделю 27.09–04.10") {
 			reports++
-			if !strings.Contains(s, "CPU °C: 40 / 60 / 80") {
+			// Замер 30.09 в неделю входит, в отличие от сводки за день выше.
+			if !strings.Contains(s, "CPU °C: 40 / 70 / 99") {
 				t.Fatalf("отчёт: %s", s)
 			}
 		}
 	}
 	if reports != 1 {
 		t.Fatalf("отчётов %d, ждали 1", reports)
+	}
+}
+
+func TestWeeklyReportNotSentLate(t *testing.T) {
+	f := newFixture(t)
+	f.svc.cfg.Report = Schedule{Day: time.Sunday, At: "20:00"}
+	// Бот впервые запущен в среду: отчёт за прошлое воскресенье слать поздно.
+	f.now = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	f.svc.Tick(context.Background())
+	for _, s := range f.takeSent() {
+		if strings.HasPrefix(s, "Отчёт") {
+			t.Fatalf("опоздавший отчёт: %s", s)
+		}
+	}
+}
+
+func TestParseSchedule(t *testing.T) {
+	got, err := ParseSchedule("Sun 20:00")
+	if err != nil || got.Day != time.Sunday || got.At != "20:00" {
+		t.Fatalf("Sun 20:00: %+v, %v", got, err)
+	}
+	for _, bad := range []string{"20:00", "Вс 20:00", "Sun 25:00", "Sun"} {
+		if _, err := ParseSchedule(bad); err == nil {
+			t.Errorf("%q принято", bad)
+		}
 	}
 }
 

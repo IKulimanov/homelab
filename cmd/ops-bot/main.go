@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	// Отчёт в 23:55 и «сегодня» считаются в поясе TZ, а в distroless базы поясов нет.
+	// Отчёт и «сегодня» считаются в поясе TZ, а в distroless базы поясов нет.
 	_ "time/tzdata"
 
 	"github.com/go-telegram/bot"
@@ -24,6 +24,7 @@ import (
 	"homelab/internal/docker"
 	"homelab/internal/host"
 	"homelab/internal/ops"
+	"homelab/internal/voice"
 )
 
 // version подставляет сборка: -ldflags "-X main.version=sha-…".
@@ -47,14 +48,20 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	report, err := ops.ParseSchedule(envOr("OPS_REPORT_AT", "Sun 20:00"))
+	if err != nil {
+		return err
+	}
 	cfg := ops.Config{
-		ChatID:       chatID,
-		Projects:     list(envOr("OPS_PROJECTS", "platform,apps,media-stack")),
-		Protected:    []string{"ops-bot"},
-		TriggerPath:  envOr("OPS_TRIGGER", "/trigger/update"),
-		Location:     time.Local,
-		ReportAt:     envOr("OPS_REPORT_AT", "23:55"),
-		Thresholds:   th,
+		ChatID:      chatID,
+		Projects:    list(envOr("OPS_PROJECTS", "platform,apps,media-stack")),
+		Protected:   []string{"ops-bot"},
+		TriggerPath: envOr("OPS_TRIGGER", "/trigger/update"),
+		Location:    time.Local,
+		Report:      report,
+		Thresholds:  th,
+		// Остальные категории (mem, swap, load, battery, health, gateway) включаются этой же переменной.
+		Alerts:       list(envOr("OPS_ALERTS", "temp,disk,service,llm")),
 		HeartbeatURL: os.Getenv("HEALTHCHECK_URL"),
 	}
 
@@ -72,7 +79,18 @@ func run(log *slog.Logger) error {
 			Disks: list(envOr("OPS_DISKS", "/")),
 		},
 		Store: store,
+		Voice: voice.New(os.Getenv("OPS_VOICE")),
 		Log:   log,
+	}
+	// Комментарий к отчёту — через шлюз со своим ключом (install.sh llm-key ops-bot). Без ключа отчёт идёт
+	// с запасной фразой.
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		deps.Commenter = &ops.GeminiCommenter{
+			Base:  envOr("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+			Key:   key,
+			Model: envOr("OPS_LLM_MODEL", "gemini-2.5-flash"),
+			HTTP:  &http.Client{Timeout: time.Minute},
+		}
 	}
 	if t := os.Getenv("LLM_ADMIN_TOKEN"); t != "" {
 		deps.LLM = &ops.GatewayClient{
@@ -91,6 +109,12 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("создать бота: %w", err)
 	}
 	deps.Send = func(ctx context.Context, text string) error { return sendText(ctx, b, chatID, text, nil) }
+	deps.SendGIF = func(ctx context.Context, fileID, caption string) error {
+		_, err := b.SendAnimation(ctx, &bot.SendAnimationParams{
+			ChatID: chatID, Animation: &models.InputFileString{Data: fileID}, Caption: caption,
+		})
+		return err
+	}
 	svc = ops.New(cfg, deps)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -104,8 +128,9 @@ func run(log *slog.Logger) error {
 		defer close(done)
 		svc.Run(ctx, dc.Events)
 	}()
-	log.Info("ops-bot запущен", "version", version, "projects", strings.Join(cfg.Projects, ","), "llm", deps.LLM != nil)
-	_ = deps.Send(ctx, "ops-bot запущен, версия "+version)
+	// Сообщения о запуске в чат нет: о новой версии и так пишет update.sh.
+	log.Info("ops-bot запущен", "version", version, "projects", strings.Join(cfg.Projects, ","), "llm", deps.LLM != nil,
+		"alerts", strings.Join(cfg.Alerts, ","), "comment", deps.Commenter != nil)
 	b.Start(ctx)
 	<-done
 	return nil
@@ -122,12 +147,13 @@ var commands = []models.BotCommand{
 	{Command: "usage", Description: "расход LLM"},
 	{Command: "topup", Description: "записать пополнение Gemini"},
 	{Command: "balance", Description: "баланс Gemini"},
+	{Command: "gif", Description: "GIF для событий"},
 }
 
 func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service, log *slog.Logger) {
 	switch {
 	case u.Message != nil:
-		for _, r := range svc.Handle(ctx, u.Message.Chat.ID, u.Message.Text) {
+		for _, r := range svc.HandleMessage(ctx, incoming(u.Message)) {
 			reply(ctx, b, u.Message.Chat.ID, r, log)
 		}
 	case u.CallbackQuery != nil:
@@ -146,6 +172,21 @@ func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service,
 			reply(ctx, b, msg.Chat.ID, r, log)
 		}
 	}
+}
+
+// incoming: команда — текст или подпись к GIF; GIF — из самого сообщения или из того, на которое ответили.
+func incoming(m *models.Message) ops.Incoming {
+	in := ops.Incoming{ChatID: m.Chat.ID, Text: m.Text}
+	if in.Text == "" {
+		in.Text = m.Caption
+	}
+	switch {
+	case m.Animation != nil:
+		in.GIF = m.Animation.FileID
+	case m.ReplyToMessage != nil && m.ReplyToMessage.Animation != nil:
+		in.GIF = m.ReplyToMessage.Animation.FileID
+	}
+	return in
 }
 
 func reply(ctx context.Context, b *bot.Bot, chatID int64, r ops.Reply, log *slog.Logger) {

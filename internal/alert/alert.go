@@ -1,5 +1,5 @@
-// Package alert решает, когда слать алерт: при ухудшении сразу, при той же беде — не чаще cooldown,
-// при возврате в норму — один раз «восстановилось».
+// Package alert решает, когда слать алерт: при ухудшении сразу, критичную беду — повторно не чаще cooldown,
+// при возврате в норму — один раз «восстановилось». «Внимание» не повторяется: это шум, а не авария.
 package alert
 
 import (
@@ -50,9 +50,30 @@ func Low(v, warn, crit float64) Level {
 }
 
 type state struct {
-	level Level
-	sent  time.Time
-	text  string
+	level   Level
+	sent    time.Time
+	text    string
+	repeats int
+}
+
+// Kind — почему сообщение ушло.
+type Kind int
+
+const (
+	None      Kind = iota
+	New            // беда появилась
+	Worse          // стало хуже
+	Repeat         // беда всё ещё есть, прошёл cooldown
+	Recovered      // вернулось в норму
+)
+
+// Msg — решение движка. Пустой Text — слать нечего.
+type Msg struct {
+	Text  string
+	Kind  Kind
+	Level Level
+	// Repeat — номер повтора, начиная с 1; для остальных видов 0.
+	Repeat int
 }
 
 type Engine struct {
@@ -67,8 +88,8 @@ func NewEngine(cooldown time.Duration) *Engine {
 	return &Engine{Cooldown: cooldown, Now: time.Now, state: map[string]*state{}}
 }
 
-// Update сообщает новое состояние проверки key. Возвращает текст для отправки или "".
-func (e *Engine) Update(key string, level Level, text string) string {
+// Update сообщает новое состояние проверки key и возвращает, что отправить.
+func (e *Engine) Update(key string, level Level, text string) Msg {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.Now()
@@ -76,29 +97,30 @@ func (e *Engine) Update(key string, level Level, text string) string {
 
 	if level == OK {
 		if !active {
-			return ""
+			return Msg{}
 		}
 		delete(e.state, key)
-		return "Восстановилось: " + text
+		return Msg{Text: "Восстановилось: " + text, Kind: Recovered, Level: OK}
 	}
 	if !active {
 		e.state[key] = &state{level: level, sent: now, text: text}
-		return level.String() + ": " + text
+		return Msg{Text: level.String() + ": " + text, Kind: New, Level: level}
 	}
 	st.text = text
 	switch {
 	case level > st.level:
 		st.level, st.sent = level, now
-		return level.String() + ": " + text
+		return Msg{Text: level.String() + ": " + text, Kind: Worse, Level: level}
 	case level < st.level:
 		// Стало легче, но не норма: молча понижаем, чтобы следующее ухудшение пришло сразу.
 		st.level = level
-		return ""
-	case now.Sub(st.sent) >= e.Cooldown:
+		return Msg{}
+	case level == Crit && now.Sub(st.sent) >= e.Cooldown:
 		st.sent = now
-		return level.String() + ", всё ещё: " + text
+		st.repeats++
+		return Msg{Text: level.String() + ", всё ещё: " + text, Kind: Repeat, Level: level, Repeat: st.repeats}
 	}
-	return ""
+	return Msg{}
 }
 
 // Is — активна ли проверка key: например, падение контейнера ещё не закрыто.

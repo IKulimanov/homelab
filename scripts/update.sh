@@ -131,10 +131,10 @@ $(docker logs --tail 20 "$svc" 2>&1)")
 
   [[ ${#report[@]} -gt 0 ]] || return 0
 
-  local title="Обновление $stack"
-  [[ $failed -eq 0 ]] || title="Обновление $stack с ошибками"
+  local title="Обновление $stack" event=update-ok
+  [[ $failed -eq 0 ]] || title="Обновление $stack с ошибками" event=update-fail
   notify "$title
-$(printf '%s\n' "${report[@]}")"
+$(printf '%s\n' "${report[@]}")" "$event"
 }
 
 main() {

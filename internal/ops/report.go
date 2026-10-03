@@ -188,17 +188,49 @@ func tokens(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-// dailyReport — сводка за день: метрики, падения контейнеров, LLM, активные алерты.
-func (s *Service) dailyReport(ctx context.Context, day time.Time) string {
-	from := dayStart(day)
-	to := from.AddDate(0, 0, 1)
+// Schedule — время недельного отчёта: день недели и «20:00» в поясе бота.
+type Schedule struct {
+	Day time.Weekday
+	At  string
+}
+
+var weekdays = map[string]time.Weekday{
+	"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday,
+	"thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,
+}
+
+// ParseSchedule разбирает «Sun 20:00».
+func ParseSchedule(v string) (Schedule, error) {
+	day, at, ok := strings.Cut(strings.TrimSpace(v), " ")
+	wd, known := weekdays[strings.ToLower(day)]
+	if _, err := time.Parse("15:04", at); !ok || !known || err != nil {
+		return Schedule{}, fmt.Errorf("время отчёта %q: нужно «день время», например Sun 20:00", v)
+	}
+	return Schedule{Day: wd, At: at}, nil
+}
+
+// last — последний момент отчёта, не позже now.
+func (sc Schedule) last(now time.Time) (time.Time, bool) {
+	at, err := time.Parse("15:04", sc.At)
+	if err != nil {
+		return time.Time{}, false
+	}
+	t := time.Date(now.Year(), now.Month(), now.Day(), at.Hour(), at.Minute(), 0, 0, now.Location())
+	for t.Weekday() != sc.Day || t.After(now) {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t, true
+}
+
+// weeklyReport — сводка за [from, to): метрики, падения контейнеров, LLM, активные алерты.
+func (s *Service) weeklyReport(ctx context.Context, from, to time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Отчёт за %s\n\n", from.Format("02.01.2006"))
+	fmt.Fprintf(&b, "Отчёт за неделю %s–%s\n\n", from.Format("02.01"), to.Format("02.01"))
 
 	if aggs, err := s.store.Aggregates(ctx, from, to); err == nil && len(aggs) > 0 {
 		b.WriteString("Мин / сред / макс:\n" + aggLines(aggs))
 	} else {
-		b.WriteString("Замеров за день нет.\n")
+		b.WriteString("Замеров за неделю нет.\n")
 	}
 
 	falls, err := s.store.Falls(ctx, from, to)
@@ -225,13 +257,13 @@ func (s *Service) dailyReport(ctx context.Context, day time.Time) string {
 
 	if s.llm != nil {
 		if st, err := s.llm.Status(ctx); err == nil {
-			var day float64
+			var week float64
 			if rows, err := s.llm.Usage(ctx, from); err == nil {
 				for _, r := range rows {
-					day += r.CostUSD
+					week += r.CostUSD
 				}
 			}
-			fmt.Fprintf(&b, "\nLLM: за день $%.2f, за месяц $%.2f из $%.2f. %s\n", day, st.TotalSpentUSD, st.TotalLimitUSD, balanceLine(st.Balance))
+			fmt.Fprintf(&b, "\nLLM: за неделю $%.2f, за месяц $%.2f из $%.2f. %s\n", week, st.TotalSpentUSD, st.TotalLimitUSD, balanceLine(st.Balance))
 		}
 	}
 
@@ -242,4 +274,26 @@ func (s *Service) dailyReport(ctx context.Context, day time.Time) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// maxComment — сколько символов комментария LLM оставить: отчёт не должен утонуть в болтовне.
+const maxComment = 600
+
+// reportComment — пара фраз персонажа к отчёту от LLM; без LLM или при ошибке — запасная фраза.
+func (s *Service) reportComment(ctx context.Context, report string) string {
+	prompt := s.voice.Text("report-prompt")
+	if s.commenter != nil && prompt != "" {
+		ctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		text, err := s.commenter.Comment(ctx, prompt, report)
+		text = strings.TrimSpace(text)
+		if err == nil && text != "" {
+			if r := []rune(text); len(r) > maxComment {
+				text = strings.TrimSpace(string(r[:maxComment])) + "…"
+			}
+			return text
+		}
+		s.log.Warn("комментарий к отчёту не получен", "err", err)
+	}
+	return s.voice.Line("report-fallback", "")
 }

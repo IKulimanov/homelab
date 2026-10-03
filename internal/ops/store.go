@@ -11,7 +11,7 @@ import (
 )
 
 const schema = `
--- Замеры раз в минуту; из них считаются мин/сред/макс за день. Храним 30 дней.
+-- Замеры раз в минуту; из них считаются мин/сред/макс за день и неделю. Храним 30 дней.
 CREATE TABLE IF NOT EXISTS samples (
 	ts     INTEGER NOT NULL,  -- unix, секунды
 	metric TEXT    NOT NULL,
@@ -19,13 +19,20 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
 
--- Падения контейнеров для дневного отчёта.
+-- Падения контейнеров для недельного отчёта.
 CREATE TABLE IF NOT EXISTS falls (
 	ts        INTEGER NOT NULL,
 	container TEXT    NOT NULL,
 	reason    TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS falls_ts ON falls(ts);
+
+-- GIF для событий: file_id Telegram, сами файлы лежат у Telegram. Их же читает update.sh через sqlite3.
+CREATE TABLE IF NOT EXISTS gifs (
+	event   TEXT NOT NULL,
+	file_id TEXT NOT NULL,
+	PRIMARY KEY (event, file_id)
+);
 
 CREATE TABLE IF NOT EXISTS meta (
 	key   TEXT PRIMARY KEY,
@@ -138,4 +145,56 @@ func (s *Store) SetMeta(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
+}
+
+func (s *Store) AddGIF(ctx context.Context, event, fileID string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO gifs (event, file_id) VALUES (?, ?)`, event, fileID)
+	if err != nil {
+		return fmt.Errorf("gif: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GIFs(ctx context.Context, event string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT file_id FROM gifs WHERE event = ?`, event)
+	if err != nil {
+		return nil, fmt.Errorf("gif: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("gif: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// GIFCounts — сколько GIF у каждого события.
+func (s *Store) GIFCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT event, COUNT(*) FROM gifs GROUP BY event`)
+	if err != nil {
+		return nil, fmt.Errorf("gif: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var e string
+		var n int
+		if err := rows.Scan(&e, &n); err != nil {
+			return nil, fmt.Errorf("gif: %w", err)
+		}
+		out[e] = n
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ClearGIFs(ctx context.Context, event string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM gifs WHERE event = ?`, event)
+	if err != nil {
+		return 0, fmt.Errorf("gif: %w", err)
+	}
+	return res.RowsAffected()
 }
