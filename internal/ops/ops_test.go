@@ -399,6 +399,29 @@ func TestSeriesAveragesByStep(t *testing.T) {
 	}
 }
 
+func TestLatestTakesNewestFreshValue(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Unix(1_800_000_000, 0)
+	_ = store.AddSamples(ctx, base.Add(-time.Hour), map[string]float64{"swap": 5})
+	_ = store.AddSamples(ctx, base.Add(-2*time.Minute), map[string]float64{"cpu_temp": 40, "mem": 50})
+	_ = store.AddSamples(ctx, base.Add(-time.Minute), map[string]float64{"cpu_temp": 45})
+	got, err := store.Latest(ctx, base.Add(-10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["cpu_temp"] != 45 || got["mem"] != 50 {
+		t.Fatalf("последние значения: %v", got)
+	}
+	if _, ok := got["swap"]; ok {
+		t.Fatalf("старый замер не должен попасть: %v", got)
+	}
+}
+
 func TestPanelCommandSendsLinkWithoutPreview(t *testing.T) {
 	f := newFixture(t)
 	if r := f.svc.Handle(context.Background(), ownChat, "/panel"); !strings.Contains(r[0].Text, "не настроена") {

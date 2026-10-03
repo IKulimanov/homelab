@@ -135,6 +135,27 @@ func (s *Store) Series(ctx context.Context, metric string, from, to time.Time, s
 	return out, rows.Err()
 }
 
+// Latest — последнее значение каждой метрики не старше since: показания приборов на Мостике панели.
+func (s *Store) Latest(ctx context.Context, since time.Time) (map[string]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT metric, value FROM samples s
+		WHERE ts >= ? AND ts = (SELECT MAX(ts) FROM samples WHERE metric = s.metric AND ts >= ?)`, since.Unix(), since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("последние замеры: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var m string
+		var v float64
+		if err := rows.Scan(&m, &v); err != nil {
+			return nil, fmt.Errorf("последние замеры: %w", err)
+		}
+		out[m] = v
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) AddFall(ctx context.Context, at time.Time, container, reason string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO falls (ts, container, reason) VALUES (?, ?, ?)`, at.Unix(), container, reason)
 	if err != nil {
