@@ -9,6 +9,7 @@
 |---|---|---|---|---|
 | `ops-bot` | platform | Бендер: алерты о важном, недельный отчёт, команды в Telegram, [подробно](docs/monitoring.md) | Docker, датчики хоста | `/srv/ops-bot/data` |
 | `llm-gateway` | platform | учёт токенов, лимиты и баланс Gemini, [подробно](docs/llm.md) | Gemini API | `/srv/llm-gateway/data` |
+| `dozzle` | platform | логи всех контейнеров в браузере, `http://<LAN_IP>:8889`, только из дома | Docker | нет |
 | `budget-bot` | apps | учёт общих трат | Gemini через шлюз, SQLite | `/srv/budget-bot/data` |
 | `wellbeing-bot` | apps | дневник самочувствия | Gemini через шлюз, SQLite | `/srv/wellbeing-bot/data` |
 | `nutrition-assistant` | apps | учёт питания и веса | Gemini через шлюз, Anthropic, OpenAI, SQLite | `/srv/nutrition-assistant/data` |

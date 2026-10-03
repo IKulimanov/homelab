@@ -59,6 +59,14 @@ install_base() {
   env_default DOCKER_GID "$(getent group docker | cut -d: -f3)" "$HOMELAB_ENV"
   # Общий секрет ops-bot и llm-gateway. Его никто не вводит руками, поэтому генерируется здесь.
   env_default LLM_ADMIN_TOKEN "$(openssl rand -hex 24)" "$HOMELAB_ENV"
+  # Адрес, с которого уходит трафик наружу, — это адрес сервера в домашней сети.
+  local lan_ip
+  lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+  if [[ -n "$lan_ip" ]]; then
+    env_default LAN_IP "$lan_ip" "$HOMELAB_ENV"
+  else
+    log "не определил адрес в домашней сети: впиши LAN_IP в $HOMELAB_ENV, иначе Dozzle доступен только с сервера"
+  fi
 
   # Сеть, через которую боты из стека apps ходят в llm-gateway из стека platform.
   # Создание сети не трогает работающие контейнеры.

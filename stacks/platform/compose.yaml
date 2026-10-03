@@ -1,5 +1,5 @@
-# Служебные программы homelab: ops-bot (алерты и команды в Telegram) и llm-gateway (учёт и лимиты LLM).
-# Образы собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /opt/homelab/.env.
+# Служебные программы homelab: ops-bot (алерты и команды в Telegram), llm-gateway (учёт и лимиты LLM), dozzle (логи).
+# Образы ops-bot и llm-gateway собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /opt/homelab/.env.
 name: platform
 
 x-svc: &svc
@@ -79,6 +79,29 @@ services:
         read_only: true
         bind:
           propagation: rslave
+
+  # Логи всех контейнеров в браузере: http://<LAN_IP>:8889. Входа нет, поэтому порт только в домашней сети.
+  dozzle:
+    <<: *svc
+    image: amir20/dozzle:v10
+    container_name: dozzle
+    stop_grace_period: 10s
+    environment:
+      # Только контейнеры из compose-проектов: platform, apps, media-stack.
+      DOZZLE_FILTER: label=com.docker.compose.project
+      DOZZLE_NO_ANALYTICS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Опубликованный порт Docker обходит ufw и слушает IPv6, поэтому привязка к адресу в домашней сети.
+    # Без LAN_IP — только localhost, открывать через ssh -L 8889:localhost:8889.
+    ports:
+      - ${LAN_IP:-127.0.0.1}:8889:8080
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   homelab:
