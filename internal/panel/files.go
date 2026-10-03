@@ -189,13 +189,27 @@ func (s *Server) lastRun() lastRun {
 	return lr
 }
 
-// running — update.sh сейчас работает, или его попросили и он ещё не начал.
+// applyWait — сколько ждать прогон после запроса. Дольше — update.sh не запустился, ждать нечего.
+const applyWait = 20 * time.Minute
+
+// running — update.sh сейчас работает, или его попросили и он ещё не начал. Юнит удаляет файл-триггер
+// до старта update.sh, а тот ещё может ждать блокировку: поэтому панель помнит время своего запроса
+// и ждёт прогон, начатый не раньше него.
 func (s *Server) running() bool {
 	if _, err := os.Stat(filepath.Join(s.Paths.Trigger, "apply")); err == nil {
 		return true
 	}
 	lr := s.lastRun()
-	return lr.Started != nil && lr.Finished == nil
+	if lr.Started != nil && lr.Finished == nil {
+		return true
+	}
+	s.applyMu.Lock()
+	at := s.applyAt
+	s.applyMu.Unlock()
+	if at.IsZero() || s.Now().Sub(at) > applyWait {
+		return false
+	}
+	return lr.Started == nil || *lr.Started < at.Unix()
 }
 
 type backupFile struct {
@@ -219,7 +233,17 @@ func (s *Server) backups() []backupFile {
 
 // trigger кладёт файл для юнита systemd: apply — update.sh auto, backup — backup.sh --all.
 func (s *Server) trigger(name string) error {
-	return os.WriteFile(filepath.Join(s.Paths.Trigger, name), []byte(s.Now().Format(time.RFC3339)+"\n"), 0o644)
+	now := s.Now()
+	if err := os.WriteFile(filepath.Join(s.Paths.Trigger, name), []byte(now.Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		return err
+	}
+	if name == "apply" {
+		s.applyMu.Lock()
+		// started в last-run.json — целые секунды: сравнение без дробной части.
+		s.applyAt = now.Truncate(time.Second)
+		s.applyMu.Unlock()
+	}
+	return nil
 }
 
 func humanSize(n int64) string {

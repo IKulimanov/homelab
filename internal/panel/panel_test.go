@@ -458,3 +458,39 @@ func TestTelegramErrorHidesToken(t *testing.T) {
 		t.Fatalf("ошибка: %v", err)
 	}
 }
+
+// Юнит удаляет файл-триггер до старта update.sh: панель всё равно ждёт прогон, начатый после её запроса.
+func TestRunningWaitsForRunAfterApply(t *testing.T) {
+	f := newFixture(t)
+	now := time.Unix(1_800_000_000, 0)
+	f.s.Now = func() time.Time { return now }
+	lastRun := filepath.Join(f.s.Paths.State, "last-run.json")
+	write(t, lastRun, `{"started":1799999000,"finished":1799999100,"code":0}`)
+	if f.s.running() {
+		t.Fatal("до запроса прогона нет")
+	}
+	if err := f.s.trigger("apply"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(f.s.Paths.Trigger, "apply"))
+	if !f.s.running() {
+		t.Fatal("файл уже удалён юнитом, но прогон ещё не начался")
+	}
+	write(t, lastRun, `{"started":1800000005,"finished":null}`)
+	if !f.s.running() {
+		t.Fatal("прогон идёт")
+	}
+	write(t, lastRun, `{"started":1800000005,"finished":1800000050,"code":0}`)
+	if f.s.running() {
+		t.Fatal("прогон закончился")
+	}
+	// update.sh так и не запустился: через 20 минут панель перестаёт ждать.
+	if err := f.s.trigger("apply"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(f.s.Paths.Trigger, "apply"))
+	now = now.Add(21 * time.Minute)
+	if f.s.running() {
+		t.Fatal("ожидание без конца")
+	}
+}

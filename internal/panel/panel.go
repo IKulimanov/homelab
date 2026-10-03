@@ -76,6 +76,9 @@ type Server struct {
 	once  sync.Once
 	pages map[string]*template.Template
 	lab   labState
+
+	applyMu sync.Mutex
+	applyAt time.Time // когда панель последний раз попросила update.sh
 }
 
 const cookieName = "pe_session"
