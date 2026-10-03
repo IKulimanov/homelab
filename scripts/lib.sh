@@ -58,13 +58,13 @@ gif_for() {
   [[ "$1" =~ ^[a-z-]+$ ]] || return 0
   # От владельца базы: sqlite3 от root может оставить файл -shm, который ops-bot потом не откроет на запись.
   setpriv --reuid="$APP_UID" --regid="$APP_UID" --clear-groups \
-    sqlite3 -readonly "$OPS_DB" "SELECT file_id FROM gifs WHERE event = '$1' ORDER BY random() LIMIT 1" 2>/dev/null || true
+    sqlite3 -init /dev/null -readonly "$OPS_DB" "SELECT file_id FROM gifs WHERE event = '$1' ORDER BY random() LIMIT 1" 2>/dev/null || true
 }
 
 # notify TEXT [EVENT] — сообщение служебному боту, с фразой и GIF события, если они есть. Без токена только
 # пишет в журнал: обновление не должно падать из-за уведомления.
 notify() {
-  local text=$1 event=${2:-} token chat line gif api
+  local text=$1 event=${2:-} token chat line gif="" api
   token=$(env_get OPS_BOT_TOKEN "$HOMELAB_ENV")
   chat=$(env_get OPS_CHAT_ID "$HOMELAB_ENV")
   log "уведомление: $text"

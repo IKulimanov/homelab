@@ -136,7 +136,8 @@ update_stack() {
   local stack=$1 env_file=$2 svc old_id new_id result report=() failed=0 existing=()
   # Скачиваются образы только тех сервисов, у которых уже есть контейнер. Новый сервис может ещё
   # не иметь образа в ghcr, и pull всего стека падал бы; новые скачивает launch_new по одному.
-  mapfile -t existing < <(compose "$stack" "$env_file" ps -a --services)
+  # Без контейнеров compose печатает пустую строку: без фильтра pull получил бы сервис с пустым именем.
+  mapfile -t existing < <(compose "$stack" "$env_file" ps -a --services | grep -v '^$')
   [[ ${#existing[@]} -gt 0 ]] || return 0
   if ! compose "$stack" "$env_file" pull --quiet "${existing[@]}" 2>"$STATE_DIR/pull-$stack.err"; then
     fail_once "pull-$stack" "Стек $stack: не удалось скачать образы. $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
@@ -206,8 +207,11 @@ legacy_unit() {
 
 # secrets_hint SVC — где заполнить секреты: ссылка на Сейф в панели, если её адрес известен.
 secrets_hint() {
-  local url
+  local url lan
   url=$(env_get PANEL_URL "$HOMELAB_ENV")
+  lan=$(env_get LAN_IP "$HOMELAB_ENV")
+  # Как в compose: без PANEL_URL панель живёт на LAN_IP:8800.
+  [[ -n "$url" || -z "$lan" ]] || url="http://$lan:8800"
   if [[ -n "$url" ]]; then
     echo "${url%/}/vault/$1"
   else
