@@ -2,7 +2,8 @@
 Description=homelab: копия баз в 3:30, до ночного обновления
 
 [Timer]
-OnCalendar=*-*-* 03:30:00
+# Часы сервера идут в UTC: время задано по Бишкеку явно.
+OnCalendar=*-*-* 03:30:00 Asia/Bishkek
 Persistent=true
 
 [Install]
