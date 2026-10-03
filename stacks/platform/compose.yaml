@@ -47,6 +47,15 @@ services:
       LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
       HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
       OPS_DISKS: ${OPS_DISKS:-/,/data,/mnt/backup}
+      # --env-file только подставляет значения в этот файл, в контейнер попадает лишь то, что перечислено здесь.
+      # Пустое значение — порог по умолчанию.
+      OPS_CPU_TEMP: ${OPS_CPU_TEMP:-}
+      OPS_SSD_TEMP: ${OPS_SSD_TEMP:-}
+      OPS_MEM: ${OPS_MEM:-}
+      OPS_SWAP: ${OPS_SWAP:-}
+      OPS_DISK: ${OPS_DISK:-}
+      OPS_LOAD: ${OPS_LOAD:-}
+      OPS_BATTERY: ${OPS_BATTERY:-}
       OPS_HOSTFS: /hostfs
       OPS_TRIGGER: /trigger/update
       OPS_DB: /data/ops.db
