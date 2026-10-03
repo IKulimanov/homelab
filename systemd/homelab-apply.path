@@ -1,0 +1,9 @@
+[Unit]
+Description=homelab: ждать кнопки «Применить» в панели
+
+[Path]
+PathExists=/srv/panel/trigger/apply
+Unit=homelab-apply.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# Запускается по файлу-триггеру от панели. Файл удаляется до запуска,
+# иначе homelab-backup-now.path сработает снова.
+[Unit]
+Description=homelab: копия баз по запросу из панели
+After=local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/rm -f /srv/panel/trigger/backup
+ExecStart=/opt/homelab/scripts/backup.sh --all

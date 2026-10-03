@@ -1,0 +1,9 @@
+[Unit]
+Description=homelab: ждать кнопки «Заморозить сейчас» в панели
+
+[Path]
+PathExists=/srv/panel/trigger/backup
+Unit=homelab-backup-now.service
+
+[Install]
+WantedBy=multi-user.target

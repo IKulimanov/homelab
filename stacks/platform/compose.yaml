@@ -1,5 +1,6 @@
-# Служебные программы homelab: ops-bot (алерты и команды в Telegram), llm-gateway (учёт и лимиты LLM), dozzle (логи).
-# Образы ops-bot и llm-gateway собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /srv/secrets/homelab.env.
+# Служебные программы homelab: ops-bot (алерты и команды в Telegram), llm-gateway (учёт и лимиты LLM), dozzle (логи),
+# panel (веб-панель «Планета Экспресс»).
+# Образы ops-bot, llm-gateway и panel собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /srv/secrets/homelab.env.
 name: platform
 
 x-svc: &svc
@@ -51,6 +52,8 @@ services:
       OPS_BOT_TOKEN: ${OPS_BOT_TOKEN}
       OPS_CHAT_ID: ${OPS_CHAT_ID}
       LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
+      # Им ops-bot просит у панели одноразовую ссылку входа (команда /panel).
+      PANEL_TOKEN: ${PANEL_TOKEN:-}
       HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
       OPS_DISKS: ${OPS_DISKS:-/,/data,/mnt/backup}
       # --env-file только подставляет значения в этот файл, в контейнер попадает лишь то, что перечислено здесь.
@@ -102,6 +105,45 @@ services:
       - ${LAN_IP:-127.0.0.1}:8889:8080
     healthcheck:
       test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Веб-панель: http://<LAN_IP>:8800. Вход — одноразовая ссылка от ops-bot (/panel). У панели docker.sock
+  # и запись в /srv, то есть права root на хосте: порт только в домашней сети. Подробности — docs/panel.md.
+  panel:
+    <<: *svc
+    image: ghcr.io/ikulimanov/panel:${PANEL_TAG:-main}
+    container_name: panel
+    stop_grace_period: 15s
+    group_add: ["${DOCKER_GID}"]
+    # Необязательные настройки панели, например PANEL_PROJECTS.
+    env_file:
+      - path: /srv/secrets/panel.env
+        required: false
+    environment:
+      TZ: ${TZ:-Asia/Bishkek}
+      PANEL_TOKEN: ${PANEL_TOKEN:-}
+      # Адрес для ссылок входа. По умолчанию — LAN_IP; другой нужен, если панель открывают по имени хоста.
+      PANEL_URL: ${PANEL_URL:-http://${LAN_IP:-127.0.0.1}:8800}
+      # Действия в панели уходят сообщением в чат служебного бота.
+      OPS_BOT_TOKEN: ${OPS_BOT_TOKEN}
+      OPS_CHAT_ID: ${OPS_CHAT_ID}
+      LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Секреты, базы сервисов, триггеры для systemd, база панели (/srv/panel/data).
+      - /srv:/srv
+      # Репозиторий: образцы секретов, фразы Бендера, panel.yaml.
+      - /opt/homelab:/homelab:ro
+      # history.jsonl, last-run.json, backups.json от update.sh и backup.sh.
+      - /var/lib/homelab:/state:ro
+    # 8081 (ссылка входа для ops-bot) не публикуется: он открыт только в сети homelab.
+    ports:
+      - ${LAN_IP:-127.0.0.1}:8800:8800
+    healthcheck:
+      test: ["CMD", "/app", "-healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

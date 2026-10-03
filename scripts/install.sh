@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Установка homelab на сервер. Повторный запуск безопасен: существующие файлы и заданные значения не перезаписываются.
 #   install.sh                    — проверки, сеть homelab, юниты и таймеры systemd, /srv/secrets/homelab.env,
-#                                   каталоги ops-bot и llm-gateway
+#                                   каталоги ops-bot, llm-gateway и panel
 #   install.sh service <svc>      — каталоги сервиса: /srv/<svc>/data и /srv/secrets/<svc>.env из образца
 #   install.sh llm-key <svc>      — новый ключ шлюза для сервиса: в /srv/secrets/llm-gateway.env и в <svc>.env
 #   install.sh enable-nightly     — включить ночное обновление медиастека (только после удаления Watchtower)
@@ -46,13 +46,15 @@ install_base() {
   env_default DOCKER_GID "$(getent group docker | cut -d: -f3)" "$HOMELAB_ENV"
   # Общий секрет ops-bot и llm-gateway. Его никто не вводит руками, поэтому генерируется здесь.
   env_default LLM_ADMIN_TOKEN "$(openssl rand -hex 24)" "$HOMELAB_ENV"
+  # Им ops-bot просит у панели ссылку входа. Тоже не для людей.
+  env_default PANEL_TOKEN "$(openssl rand -hex 24)" "$HOMELAB_ENV"
   # Адрес, с которого уходит трафик наружу, — это адрес сервера в домашней сети.
   local lan_ip
   lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
   if [[ -n "$lan_ip" ]]; then
     env_default LAN_IP "$lan_ip" "$HOMELAB_ENV"
   else
-    log "не определил адрес в домашней сети: впиши LAN_IP в $HOMELAB_ENV, иначе Dozzle доступен только с сервера"
+    log "не определил адрес в домашней сети: впиши LAN_IP в $HOMELAB_ENV, иначе Dozzle и панель доступны только с сервера"
   fi
 
   # Сеть, через которую боты из стека apps ходят в llm-gateway из стека platform.
@@ -64,14 +66,15 @@ install_base() {
 
   install_service ops-bot
   install_service llm-gateway
+  install_service panel
 
   local unit
   for unit in "$HOMELAB_DIR"/systemd/*; do
     install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
   done
   systemctl daemon-reload
-  systemctl enable --now homelab-update.timer homelab-backup.timer homelab-update.path
-  log "таймеры включены: обновление раз в 5 минут, бэкап в 3:30"
+  systemctl enable --now homelab-update.timer homelab-backup.timer homelab-update.path homelab-apply.path homelab-backup-now.path
+  log "таймеры включены: обновление раз в 5 минут, бэкап в 3:30; кнопки панели «Применить» и «Заморозить» работают"
   log "ночное обновление медиастека выключено до удаления Watchtower: install.sh enable-nightly"
 }
 
