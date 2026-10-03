@@ -29,9 +29,9 @@ backup_db() {
   tmp=$(mktemp -d)
   chown "$owner" "$tmp"
   setpriv --reuid="${owner%:*}" --regid="${owner#*:}" --clear-groups \
-    sqlite3 "$db" ".backup '$tmp/copy.db'" || { rm -rf "$tmp"; die "$svc: sqlite3 .backup для $name не сработал"; }
+    sqlite3 -init /dev/null "$db" ".backup '$tmp/copy.db'" || { rm -rf "$tmp"; die "$svc: sqlite3 .backup для $name не сработал"; }
 
-  check=$(sqlite3 "$tmp/copy.db" 'PRAGMA quick_check;')
+  check=$(sqlite3 -init /dev/null "$tmp/copy.db" 'PRAGMA quick_check;')
   if [[ "$check" != "ok" ]]; then
     rm -rf "$tmp"
     die "$svc: копия $name не прошла проверку: $check"
