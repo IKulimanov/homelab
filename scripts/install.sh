@@ -105,7 +105,7 @@ install_service() {
 }
 
 install_nutrition() {
-  local cfg="$SRV_DIR/nutrition-assistant/config.yaml" old=/etc/nutrition-assistant/config.yaml root dir
+  local cfg="$SRV_DIR/nutrition-assistant/config.yaml" old=/etc/nutrition-assistant/config.yaml root dir require
   if [[ ! -e "$cfg" ]]; then
     [[ -r "$old" ]] || die "нет $old: положи в $cfg копию config.example.yaml из репозитория nutrition-assistant"
     # Читает контейнер (группа 65532), пишет только root.
@@ -120,11 +120,15 @@ install_nutrition() {
   root=$(env_get BACKUP_ROOT "$HOMELAB_ENV")
   root=${root:-/mnt/backup}
   dir="$root/nutrition-assistant"
-  if ! mountpoint -q "$root"; then
+  require=$(env_get BACKUP_REQUIRE_MOUNT "$HOMELAB_ENV")
+  if [[ "${require:-yes}" == yes ]] && ! mountpoint -q "$root"; then
     log "$root не смонтирован: создай $dir с владельцем $APP_UID, когда том будет на месте"
     return 0
   fi
   mkdir -p "$dir"
+  # Контейнеру нужно пройти через $root к своему каталогу. Только проход, без чтения списка:
+  # каталоги копий других сервисов закрыты (0700, root).
+  chmod o+x "$root" 2>/dev/null || true
   # На CIFS владельца задают опции монтирования uid= и gid=, chown там не работает.
   chown "$APP_UID:$APP_UID" "$dir" 2>/dev/null || true
   if ! setpriv --reuid="$APP_UID" --regid="$APP_UID" --clear-groups test -w "$dir"; then
