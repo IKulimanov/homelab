@@ -234,7 +234,8 @@ services:
     memswap_limit: 1g
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5055"]
+      # В образе нет curl, из-за этого контейнер числился unhealthy при рабочем сервисе. wget есть в busybox.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5055/api/v1/status"]
       interval: 30s
       timeout: 10s
       retries: 3
