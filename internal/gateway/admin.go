@@ -105,6 +105,24 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// daily — расход по суткам с момента ?since=RFC3339 для графика в панели. Сутки — в поясе сервера (TZ).
+func (s *Server) daily(w http.ResponseWriter, r *http.Request) {
+	since, err := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "since: нужна дата в RFC3339")
+		return
+	}
+	rows, err := s.Store.Daily(r.Context(), since, s.Now().Location())
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []DailyRow{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
 // ledger — пополнение (topup, сумма больше нуля) или сверка с AI Studio (set, сумма не меньше нуля).
 func (s *Server) ledger(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

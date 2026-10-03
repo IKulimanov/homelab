@@ -375,3 +375,26 @@ func TestSplitTextByLines(t *testing.T) {
 		t.Fatalf("короткий текст разбит: %v", got)
 	}
 }
+
+func TestSeriesAveragesByStep(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Unix(1_800_000_000, 0) // кратно 600
+	for i, v := range []float64{10, 20, 30, 40} {
+		at := base.Add(time.Duration(i) * 5 * time.Minute)
+		if err := store.AddSamples(ctx, at, map[string]float64{"cpu_temp": v, "mem": 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pts, err := store.Series(ctx, "cpu_temp", base, base.Add(time.Hour), 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 2 || pts[0].V != 15 || pts[1].V != 35 || !pts[1].T.Equal(base.Add(10*time.Minute)) {
+		t.Fatalf("точки: %+v", pts)
+	}
+}

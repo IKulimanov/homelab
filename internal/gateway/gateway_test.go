@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -342,5 +343,45 @@ func TestRepoConfigParses(t *testing.T) {
 	}
 	if _, ok := cfg.Prices[DefaultPrice]; !ok {
 		t.Fatal("нет цены default: расход по новой модели не попадёт в лимиты")
+	}
+}
+
+func TestDailySplitsByLocalDay(t *testing.T) {
+	f := newFixture(t)
+	// В UTC оба вызова попали бы в 14 октября; по местному времени (UTC+6) это разные сутки.
+	loc := time.FixedZone("UTC+6", 6*3600)
+	f.now = time.Date(2026, 10, 14, 23, 30, 0, 0, loc)
+	f.generate(budgetKey)
+	f.now = time.Date(2026, 10, 15, 0, 30, 0, 0, loc)
+	f.generate(budgetKey)
+	f.generate(wellKey)
+
+	rec := f.adminDo(http.MethodGet, "/admin/daily?since="+url.QueryEscape("2026-10-01T00:00:00+06:00"), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("daily: %d %s", rec.Code, rec.Body)
+	}
+	var rows []DailyRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		if r.CostUSD <= 0 {
+			t.Errorf("нет стоимости: %+v", r)
+		}
+		got = append(got, r.Day+" "+r.Client+" "+strconv.FormatInt(r.Calls, 10))
+	}
+	want := []string{"2026-10-14 budget-bot 1", "2026-10-15 budget-bot 1", "2026-10-15 wellbeing-bot 1"}
+	if strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Fatalf("дни: %v, ждали %v", got, want)
+	}
+}
+
+func TestDailyRequiresToken(t *testing.T) {
+	f := newFixture(t)
+	rec := httptest.NewRecorder()
+	f.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/daily?since=2026-10-01T00:00:00Z", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("код %d", rec.Code)
 	}
 }

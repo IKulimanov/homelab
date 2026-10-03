@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"homelab/internal/sqlitedb"
@@ -194,4 +195,57 @@ func (s *Store) Balance(ctx context.Context) (Balance, error) {
 	}
 	b.USD, b.Topups, b.Spent = USD(base+topups-spent), USD(topups), USD(spent)
 	return b, nil
+}
+
+// DailyRow — расход клиента за одни сутки по местному времени.
+type DailyRow struct {
+	Day     string  `json:"day"` // 2006-01-02
+	Client  string  `json:"client"`
+	Calls   int64   `json:"calls"`
+	CostUSD float64 `json:"cost_usd"`
+}
+
+// Daily — расход по суткам и клиентам с момента since. Сутки считаются в поясе loc в Go, а не в SQL:
+// у SQLite нет базы поясов, а вызовов за месяц — тысячи, их проще разложить здесь.
+func (s *Store) Daily(ctx context.Context, since time.Time, loc *time.Location) ([]DailyRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ts, client, cost_micros FROM calls WHERE ts >= ? ORDER BY ts`, since.UnixMilli())
+	if err != nil {
+		return nil, fmt.Errorf("расход по дням: %w", err)
+	}
+	defer rows.Close()
+	type key struct{ day, client string }
+	idx := map[key]int{}
+	var out []DailyRow
+	micros := []int64{}
+	for rows.Next() {
+		var ts, cost int64
+		var client string
+		if err := rows.Scan(&ts, &client, &cost); err != nil {
+			return nil, fmt.Errorf("расход по дням: %w", err)
+		}
+		k := key{time.UnixMilli(ts).In(loc).Format(time.DateOnly), client}
+		i, ok := idx[k]
+		if !ok {
+			i = len(out)
+			idx[k] = i
+			out = append(out, DailyRow{Day: k.day, Client: client})
+			micros = append(micros, 0)
+		}
+		out[i].Calls++
+		micros[i] += cost
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("расход по дням: %w", err)
+	}
+	for i := range out {
+		out[i].CostUSD = USD(micros[i])
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		if out[a].Day != out[b].Day {
+			return out[a].Day < out[b].Day
+		}
+		return out[a].Client < out[b].Client
+	})
+	return out, nil
 }

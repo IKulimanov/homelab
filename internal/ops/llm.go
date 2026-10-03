@@ -31,6 +31,12 @@ func (g *GatewayClient) Usage(ctx context.Context, since time.Time) ([]gateway.U
 	return rows, g.call(ctx, http.MethodGet, "/admin/usage?since="+url.QueryEscape(since.Format(time.RFC3339)), nil, &rows)
 }
 
+// Daily — расход по суткам и клиентам, для графика в панели.
+func (g *GatewayClient) Daily(ctx context.Context, since time.Time) ([]gateway.DailyRow, error) {
+	var rows []gateway.DailyRow
+	return rows, g.call(ctx, http.MethodGet, "/admin/daily?since="+url.QueryEscape(since.Format(time.RFC3339)), nil, &rows)
+}
+
 // Ledger — пополнение (kind "topup") или сверка баланса (kind "set").
 func (g *GatewayClient) Ledger(ctx context.Context, kind string, usd float64) (gateway.Balance, error) {
 	path := "/admin/topup"

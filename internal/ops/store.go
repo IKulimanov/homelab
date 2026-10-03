@@ -52,6 +52,15 @@ func OpenStore(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenStoreRO — та же база только на чтение, для панели: OpenStore применяет схему, а это запись.
+func OpenStoreRO(path string) (*Store, error) {
+	db, err := sqlitedb.OpenRO(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) AddSamples(ctx context.Context, at time.Time, values map[string]float64) error {
@@ -90,6 +99,38 @@ func (s *Store) Aggregates(ctx context.Context, from, to time.Time) (map[string]
 			return nil, fmt.Errorf("сводка замеров: %w", err)
 		}
 		out[m] = a
+	}
+	return out, rows.Err()
+}
+
+// Point — среднее значение метрики за шаг, начиная с T.
+type Point struct {
+	T time.Time
+	V float64
+}
+
+// Series — средние значения метрики за [from, to) с шагом step, для графиков панели.
+func (s *Store) Series(ctx context.Context, metric string, from, to time.Time, step time.Duration) ([]Point, error) {
+	sec := int64(step / time.Second)
+	if sec <= 0 {
+		return nil, fmt.Errorf("ряд %s: шаг меньше секунды", metric)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts / ? * ? AS b, AVG(value) FROM samples
+		WHERE metric = ? AND ts >= ? AND ts < ? GROUP BY b ORDER BY b`, sec, sec, metric, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("ряд %s: %w", metric, err)
+	}
+	defer rows.Close()
+	var out []Point
+	for rows.Next() {
+		var b int64
+		var p Point
+		if err := rows.Scan(&b, &p.V); err != nil {
+			return nil, fmt.Errorf("ряд %s: %w", metric, err)
+		}
+		p.T = time.Unix(b, 0)
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }
