@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Копия баз SQLite сервиса: все *.db из /srv/<svc>/data.
 #   backup.sh <svc> [метка]   — один сервис; метка попадает в имя файла (pre-update, manual)
-#   backup.sh --all           — все сервисы, у которых есть базы; так запускает homelab-backup.timer
+#   backup.sh --all           — все сервисы, у которых есть базы, и секреты; так запускает homelab-backup.timer
+#   backup.sh secrets         — только секреты: tar каталога /srv/secrets, зашифрованный age ключом AGE_RECIPIENT
+# После каждого запуска пишется /var/lib/homelab/backups.json — список копий для панели (сами копии ей не видны).
 # Копия снимается через sqlite3 .backup: простое копирование файла в режиме WAL даёт битый снимок.
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -60,9 +62,49 @@ prune_service() {
   done < <(find "$SRV_DIR/$svc/data" -maxdepth 1 -name '*.db' -print0)
 }
 
+# backup_secrets — копия секретов, зашифрованная открытым ключом. Расшифровать можно только закрытым ключом,
+# которого на сервере нет: копия на сетевом томе не выдаёт секреты.
+backup_secrets() {
+  local recipient dest out
+  recipient=$(env_get AGE_RECIPIENT "$HOMELAB_ENV")
+  if [[ -z "$recipient" ]]; then
+    log "AGE_RECIPIENT не задан: копия секретов не сделана"
+    return 0
+  fi
+  command -v age >/dev/null || die "нет age: копия секретов не сделана (apt install age)"
+  dest="$BACKUP_ROOT/secrets"
+  out="$dest/secrets-$(date +%Y-%m-%d).tar.age"
+  mkdir -p "$dest"
+  if ! tar -C "$(dirname "$SECRETS_DIR")" -czf - "$(basename "$SECRETS_DIR")" | age -r "$recipient" -o "$out.tmp"; then
+    rm -f "$out.tmp"
+    die "копия секретов не сделана: tar или age завершились с ошибкой"
+  fi
+  mv "$out.tmp" "$out"
+  find "$dest" -maxdepth 1 -name 'secrets-20??-??-??.tar.age' -mtime "+$KEEP_DAYS" -delete
+  log "секреты: копия $out"
+}
+
+# write_summary — список копий для экрана «Морозильник»: сервис, файл, размер, время.
+write_summary() {
+  local out="$STATE_DIR/backups.json"
+  [[ -d "$BACKUP_ROOT" ]] || return 0
+  mkdir -p "$STATE_DIR"
+  if ! find "$BACKUP_ROOT" -mindepth 2 -maxdepth 2 -not -path "$BACKUP_ROOT/legacy/*" \
+    \( -name '*.db.gz' -o -name '*.tar.age' \) -printf '%P\t%s\t%T@\n' |
+    jq -R -s -c '[split("\n")[] | select(. != "") | split("\t") |
+      {svc: (.[0] | split("/")[0]), file: (.[0] | split("/")[1]), size: (.[1] | tonumber), ts: (.[2] | tonumber | floor)}]
+      | sort_by(-.ts)' >"$out.tmp"; then
+    rm -f "$out.tmp"
+    log "сводка копий не записана"
+    return 0
+  fi
+  chmod 0644 "$out.tmp"
+  mv "$out.tmp" "$out"
+}
+
 main() {
   [[ $EUID -eq 0 ]] || die "нужен root"
-  [[ $# -ge 1 ]] || die "использование: backup.sh <svc> [метка] | --all"
+  [[ $# -ge 1 ]] || die "использование: backup.sh <svc> [метка] | --all | secrets"
   if [[ "$REQUIRE_MOUNT" == "yes" ]] && ! mountpoint -q "$BACKUP_ROOT"; then
     notify "Бэкап не сделан: $BACKUP_ROOT не смонтирован." backup-fail
     die "$BACKUP_ROOT не смонтирован"
@@ -80,12 +122,18 @@ main() {
         failed+=("$svc")
       fi
     done
+    ( backup_secrets ) || failed+=(секреты)
+    write_summary
     if [[ ${#failed[@]} -gt 0 ]]; then
       notify "Бэкап с ошибками: ${failed[*]}. Подробности: journalctl -u homelab-backup" backup-fail
       exit 1
     fi
+  elif [[ "$1" == "secrets" ]]; then
+    backup_secrets
+    write_summary
   else
     backup_service "$1" "${2:-}"
+    write_summary
   fi
 }
 

@@ -1,6 +1,6 @@
 # Цены и лимиты llm-gateway. Шлюз перечитывает файл сам после git pull, перезапуск не нужен.
 # Ошибка в файле не ломает шлюз: он остаётся на прежней версии и пишет ошибку в лог (docker logs llm-gateway).
-# Ключи клиентов здесь не хранятся: они в /srv/llm-gateway/.env, переменные LLM_KEY_<ИМЯ>.
+# Ключи клиентов здесь не хранятся: они в /srv/secrets/llm-gateway.env, переменные LLM_KEY_<ИМЯ>.
 
 # Доллары за миллион токенов, как в прайсе Google: https://ai.google.dev/gemini-api/docs/pricing
 # Размышления (thinking) оплачиваются как output. cache_read — цена токенов из неявного кэша.
@@ -22,7 +22,7 @@ prices:
     cache_read: 0.075
 
 # Месячные лимиты в долларах. Исчерпан — шлюз отвечает 429 и в Google запрос не отправляет.
-# На 80 % и 100 % ops-bot присылает алерт. Месяц считается по TZ из /opt/homelab/.env.
+# На 80 % и 100 % ops-bot присылает алерт. Месяц считается по TZ из /srv/secrets/homelab.env.
 clients:
   budget-bot:
     monthly_limit_usd: 2

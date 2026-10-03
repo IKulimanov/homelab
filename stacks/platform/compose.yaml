@@ -1,5 +1,5 @@
 # Служебные программы homelab: ops-bot (алерты и команды в Telegram), llm-gateway (учёт и лимиты LLM), dozzle (логи).
-# Образы ops-bot и llm-gateway собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /opt/homelab/.env.
+# Образы ops-bot и llm-gateway собираются из этого же репозитория (.github/workflows/build.yml). Общие переменные — /srv/secrets/homelab.env.
 name: platform
 
 x-svc: &svc
@@ -17,7 +17,9 @@ services:
     image: ghcr.io/ikulimanov/llm-gateway:${LLM_GATEWAY_TAG:-main}
     container_name: llm-gateway
     # GEMINI_API_KEY и ключи ботов LLM_KEY_<ИМЯ>.
-    env_file: /srv/llm-gateway/.env
+    env_file:
+      - path: /srv/secrets/llm-gateway.env
+        required: false
     environment:
       TZ: ${TZ:-Asia/Bishkek}
       LLM_ADMIN_TOKEN: ${LLM_ADMIN_TOKEN:-}
@@ -40,8 +42,10 @@ services:
     container_name: ops-bot
     # Группа docker хоста: без неё пользователь nonroot не откроет сокет. Значение пишет install.sh.
     group_add: ["${DOCKER_GID}"]
-    # Ключ шлюза для комментария к недельному отчёту: GEMINI_API_KEY, GEMINI_BASE_URL (install.sh llm-key ops-bot).
-    env_file: /srv/ops-bot/.env
+    # Ключ шлюза для комментария к недельному отчёту: GEMINI_API_KEY, GEMINI_BASE_URL. Пишет update.sh при установке.
+    env_file:
+      - path: /srv/secrets/ops-bot.env
+        required: false
     environment:
       TZ: ${TZ:-Asia/Bishkek}
       OPS_BOT_TOKEN: ${OPS_BOT_TOKEN}
