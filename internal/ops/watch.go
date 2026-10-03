@@ -83,16 +83,16 @@ func (s *Service) HandleEvent(ctx context.Context, ev docker.Event) {
 			return
 		}
 		s.fall(ctx, name, fmt.Sprintf("код %d", code))
-		s.alert(ctx, key, alert.Crit, fmt.Sprintf("%s упал, код выхода %d. Лог: /logs %s", name, code, name))
+		s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s упал, код выхода %d. Лог: /logs %s", name, code, name))
 	case ev.Action == "oom":
 		s.fall(ctx, name, "oom")
-		s.alert(ctx, key, alert.Crit, fmt.Sprintf("%s: не хватило памяти, процесс убит (OOM). Лог: /logs %s", name, name))
+		s.alert(ctx, "oom", key, alert.Crit, fmt.Sprintf("%s: не хватило памяти, процесс убит (OOM). Лог: /logs %s", name, name))
 	case strings.HasPrefix(ev.Action, "health_status"):
 		switch strings.TrimSpace(strings.TrimPrefix(ev.Action, "health_status:")) {
 		case "unhealthy":
-			s.alert(ctx, "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
+			s.alert(ctx, "health", "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
 		case "healthy":
-			s.alert(ctx, "health:"+name, alert.OK, name+": healthcheck снова проходит")
+			s.alert(ctx, "health", "health:"+name, alert.OK, name+": healthcheck снова проходит")
 		}
 	}
 }
@@ -139,33 +139,33 @@ func (s *Service) Tick(ctx context.Context) {
 
 func (s *Service) checkHost(ctx context.Context, snap host.Snapshot) {
 	th := s.cfg.Thresholds
-	high := func(key, label string, v float64, r Range, unit string) {
+	high := func(event, key, label string, v float64, r Range, unit string) {
 		if !host.Known(v) {
 			return
 		}
 		lvl := alert.High(v, r.Warn, r.Crit)
-		s.alert(ctx, key, lvl, fmt.Sprintf("%s %.0f%s (пороги %.0f и %.0f)", label, v, unit, r.Warn, r.Crit))
+		s.alert(ctx, event, key, lvl, fmt.Sprintf("%s %.0f%s (пороги %.0f и %.0f)", label, v, unit, r.Warn, r.Crit))
 	}
-	high("cpu-temp", "температура CPU", snap.CPUTemp, th.CPUTemp, " °C")
-	high("ssd-temp", "температура SSD", snap.SSDTemp, th.SSDTemp, " °C")
-	high("mem", "занято памяти", snap.MemPct, th.Mem, " %")
-	high("swap", "занято swap", snap.SwapPct, th.Swap, " %")
+	high("temp", "cpu-temp", "температура CPU", snap.CPUTemp, th.CPUTemp, " °C")
+	high("temp", "ssd-temp", "температура SSD", snap.SSDTemp, th.SSDTemp, " °C")
+	high("mem", "mem", "занято памяти", snap.MemPct, th.Mem, " %")
+	high("swap", "swap", "занято swap", snap.SwapPct, th.Swap, " %")
 	for _, d := range snap.Disks {
-		high("disk:"+d.Path, "диск "+d.Path+" занят на", d.UsedPct, th.Disk, " %")
+		high("disk", "disk:"+d.Path, "диск "+d.Path+" занят на", d.UsedPct, th.Disk, " %")
 	}
 	if host.Known(snap.Load5) && snap.CPUs > 0 {
 		cpus := float64(snap.CPUs)
 		lvl := alert.High(snap.Load5/cpus, th.Load.Warn, th.Load.Crit)
-		s.alert(ctx, "load", lvl, fmt.Sprintf("load average %.2f при %d ядрах (пороги %.0f и %.0f)",
+		s.alert(ctx, "load", "load", lvl, fmt.Sprintf("load average %.2f при %d ядрах (пороги %.0f и %.0f)",
 			snap.Load5, snap.CPUs, th.Load.Warn*cpus, th.Load.Crit*cpus))
 	}
 	if b := snap.Battery; b != nil {
 		if b.Discharging {
 			// Работа от батареи — уже беда: отключилось питание.
 			lvl := max(alert.Warn, alert.Low(b.Percent, th.Battery.Warn, th.Battery.Crit))
-			s.alert(ctx, "power", lvl, fmt.Sprintf("сервер работает от батареи, заряд %.0f %%", b.Percent))
+			s.alert(ctx, "battery", "power", lvl, fmt.Sprintf("сервер работает от батареи, заряд %.0f %%", b.Percent))
 		} else {
-			s.alert(ctx, "power", alert.OK, fmt.Sprintf("питание вернулось, заряд %.0f %%", b.Percent))
+			s.alert(ctx, "battery", "power", alert.OK, fmt.Sprintf("питание вернулось, заряд %.0f %%", b.Percent))
 		}
 	}
 }
@@ -196,10 +196,10 @@ func (s *Service) saveSamples(ctx context.Context, snap host.Snapshot) {
 func (s *Service) checkContainers(ctx context.Context) bool {
 	list, err := s.docker.List(ctx)
 	if err != nil {
-		s.alert(ctx, "docker", alert.Crit, "Docker не отвечает: "+err.Error())
+		s.alert(ctx, "docker", "docker", alert.Crit, "Docker не отвечает: "+err.Error())
 		return false
 	}
-	s.alert(ctx, "docker", alert.OK, "Docker снова отвечает")
+	s.alert(ctx, "docker", "docker", alert.OK, "Docker снова отвечает")
 
 	present := map[string]bool{}
 	for _, c := range list {
@@ -215,23 +215,23 @@ func (s *Service) checkContainers(ctx context.Context) bool {
 		}
 		switch {
 		case insp.State.Restarting:
-			s.alert(ctx, key, alert.Crit, fmt.Sprintf("%s перезапускается по кругу, перезапусков %d. Лог: /logs %s", name, insp.RestartCount, name))
+			s.alert(ctx, "restart-loop", key, alert.Crit, fmt.Sprintf("%s перезапускается по кругу, перезапусков %d. Лог: /logs %s", name, insp.RestartCount, name))
 		case insp.State.Running:
 			if s.alerts.Is(key) && s.now().Sub(insp.State.StartedAt) >= stableAfter {
-				s.alert(ctx, key, alert.OK, name+" снова работает")
+				s.alert(ctx, "died", key, alert.OK, name+" снова работает")
 			}
 			if insp.Health() == "unhealthy" {
-				s.alert(ctx, "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
+				s.alert(ctx, "health", "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
 			} else if insp.Health() == "healthy" {
-				s.alert(ctx, "health:"+name, alert.OK, name+": healthcheck снова проходит")
+				s.alert(ctx, "health", "health:"+name, alert.OK, name+": healthcheck снова проходит")
 			}
 		default:
 			// 137 и 143 — остановка сигналом (docker stop); такую остановку делают руками или обновление.
 			code := insp.State.ExitCode
 			if code != 0 && code != 137 && code != 143 {
-				s.alert(ctx, key, alert.Crit, fmt.Sprintf("%s остановлен с кодом %d. Лог: /logs %s", name, code, name))
+				s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s остановлен с кодом %d. Лог: /logs %s", name, code, name))
 			} else if insp.State.OOMKilled {
-				s.alert(ctx, key, alert.Crit, fmt.Sprintf("%s убит из-за нехватки памяти (OOM)", name))
+				s.alert(ctx, "oom", key, alert.Crit, fmt.Sprintf("%s убит из-за нехватки памяти (OOM)", name))
 			}
 		}
 	}
@@ -249,10 +249,10 @@ func (s *Service) checkContainers(ctx context.Context) bool {
 func (s *Service) checkLLM(ctx context.Context) {
 	st, err := s.llm.Status(ctx)
 	if err != nil {
-		s.alert(ctx, "llm:gateway", alert.Warn, "шлюз LLM не отвечает: "+err.Error())
+		s.alert(ctx, "gateway", "llm:gateway", alert.Warn, "шлюз LLM не отвечает: "+err.Error())
 		return
 	}
-	s.alert(ctx, "llm:gateway", alert.OK, "шлюз LLM снова отвечает")
+	s.alert(ctx, "gateway", "llm:gateway", alert.OK, "шлюз LLM снова отвечает")
 
 	for _, c := range st.Clients {
 		p := percent(c.SpentUSD, c.LimitUSD)
@@ -260,10 +260,10 @@ func (s *Service) checkLLM(ctx context.Context) {
 		if p >= 100 {
 			text += ", запросы отклоняются до 1-го числа. Лимит — в stacks/platform/config/llm-gateway.yaml"
 		}
-		s.alert(ctx, "llm:"+c.Name, alert.High(p, 80, 100), text)
+		s.alert(ctx, "llm-limit", "llm:"+c.Name, alert.High(p, 80, 100), text)
 	}
 	p := percent(st.TotalSpentUSD, st.TotalLimitUSD)
-	s.alert(ctx, "llm:total", alert.High(p, 80, 100),
+	s.alert(ctx, "llm-limit", "llm:total", alert.High(p, 80, 100),
 		fmt.Sprintf("LLM всего: $%.2f из $%.2f за месяц (%.0f %%)", st.TotalSpentUSD, st.TotalLimitUSD, p))
 
 	if st.Balance.Known {
@@ -274,37 +274,40 @@ func (s *Service) checkLLM(ctx context.Context) {
 		case st.Balance.USD < st.BalanceAlertUSD:
 			lvl = alert.Warn
 		}
-		s.alert(ctx, "llm:balance", lvl, fmt.Sprintf("баланс Gemini ~$%.2f (порог $%.2f). Пополнить в AI Studio, затем /topup <сумма>",
+		s.alert(ctx, "balance", "llm:balance", lvl, fmt.Sprintf("баланс Gemini ~$%.2f (порог $%.2f). Пополнить в AI Studio, затем /topup <сумма>",
 			st.Balance.USD, st.BalanceAlertUSD))
 	}
 	if len(st.UnpricedModels) > 0 {
-		s.alert(ctx, "llm:prices", alert.Warn, "нет цены для моделей "+strings.Join(st.UnpricedModels, ", ")+": расход по ним не считается")
+		s.alert(ctx, "prices", "llm:prices", alert.Warn, "нет цены для моделей "+strings.Join(st.UnpricedModels, ", ")+": расход по ним не считается")
 	} else {
-		s.alert(ctx, "llm:prices", alert.OK, "цены есть для всех моделей")
+		s.alert(ctx, "prices", "llm:prices", alert.OK, "цены есть для всех моделей")
 	}
 }
 
-// maybeReport шлёт отчёт за день один раз после ReportAt; день отчёта хранится в базе,
-// чтобы перезапуск в 23:57 не прислал отчёт второй раз.
+// maybeReport шлёт недельный отчёт один раз после назначенного времени. Неделя отчёта хранится в базе,
+// чтобы перезапуск бота не прислал отчёт второй раз. Если бот в назначенное время не работал, отчёт уходит
+// в течение суток, позже — уже нет: старый отчёт после переезда или долгого простоя только мешает.
 func (s *Service) maybeReport(ctx context.Context) {
-	if s.cfg.ReportAt == "" {
+	if s.cfg.Report.At == "" {
 		return
 	}
 	now := s.now().In(s.cfg.Location)
-	if now.Format("15:04") < s.cfg.ReportAt {
+	due, ok := s.cfg.Report.last(now)
+	if !ok || now.Sub(due) > 24*time.Hour {
 		return
 	}
-	today := now.Format(time.DateOnly)
-	last, err := s.store.Meta(ctx, "report_day")
-	if err != nil || last == today {
+	week := due.Format(time.DateOnly)
+	last, err := s.store.Meta(ctx, "report_week")
+	if err != nil || last == week {
 		return
 	}
-	if err := s.send(ctx, s.dailyReport(ctx, now)); err != nil {
+	text := s.weeklyReport(ctx, due.AddDate(0, 0, -7), now)
+	if err := s.notify(ctx, withLine(text, s.reportComment(ctx, text)), "report"); err != nil {
 		s.log.Error("отчёт не отправлен", "err", err)
 		return
 	}
-	if err := s.store.SetMeta(ctx, "report_day", today); err != nil {
-		s.log.Error("день отчёта не записан", "err", err)
+	if err := s.store.SetMeta(ctx, "report_week", week); err != nil {
+		s.log.Error("неделя отчёта не записана", "err", err)
 	}
 }
 

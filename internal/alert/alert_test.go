@@ -13,7 +13,7 @@ func TestEngineCooldownEscalationAndRecovery(t *testing.T) {
 	step := func(d time.Duration, level Level, wantPrefix string) {
 		t.Helper()
 		now = now.Add(d)
-		got := e.Update("ram", level, "RAM 90 %")
+		got := e.Update("ram", level, "RAM 90 %").Text
 		if wantPrefix == "" && got != "" || wantPrefix != "" && !strings.HasPrefix(got, wantPrefix) {
 			t.Fatalf("через %v уровень %v: %q, ждали %q", d, level, got, wantPrefix)
 		}
@@ -31,9 +31,44 @@ func TestEngineCooldownEscalationAndRecovery(t *testing.T) {
 	step(time.Minute, OK, "") // «восстановилось» — один раз
 }
 
+func TestEngineWarnNotRepeated(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	e := NewEngine(time.Hour)
+	e.Now = func() time.Time { return now }
+	if m := e.Update("disk:/", Warn, "диск 85 %"); m.Kind != New {
+		t.Fatalf("первое: %+v", m)
+	}
+	now = now.Add(5 * time.Hour)
+	if m := e.Update("disk:/", Warn, "диск 86 %"); m.Text != "" {
+		t.Fatalf("«Внимание» повторилось: %+v", m)
+	}
+}
+
+func TestEngineRepeatCounter(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	e := NewEngine(time.Hour)
+	e.Now = func() time.Time { return now }
+	e.Update("cpu", Crit, "91")
+	for _, want := range []int{1, 2, 3, 4} {
+		now = now.Add(time.Hour)
+		m := e.Update("cpu", Crit, "91")
+		if m.Kind != Repeat || m.Repeat != want {
+			t.Fatalf("повтор %d: %+v", want, m)
+		}
+	}
+	if m := e.Update("cpu", OK, "70"); m.Kind != Recovered {
+		t.Fatalf("восстановление: %+v", m)
+	}
+	e.Update("cpu", Crit, "92")
+	now = now.Add(time.Hour)
+	if m := e.Update("cpu", Crit, "92"); m.Repeat != 1 {
+		t.Fatalf("счётчик не сброшен после восстановления: %+v", m)
+	}
+}
+
 func TestEngineKeysIndependent(t *testing.T) {
 	e := NewEngine(time.Hour)
-	if e.Update("disk:/", Warn, "a") == "" || e.Update("disk:/data", Warn, "b") == "" {
+	if e.Update("disk:/", Warn, "a").Text == "" || e.Update("disk:/data", Warn, "b").Text == "" {
 		t.Fatal("разные проверки глушат друг друга")
 	}
 	if got := e.Active(); len(got) != 2 {

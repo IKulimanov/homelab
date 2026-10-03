@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"homelab/internal/alert"
 	"homelab/internal/docker"
 	"homelab/internal/gateway"
 	"homelab/internal/host"
+	"homelab/internal/voice"
 )
 
 // Docker — то, что нужно от Docker Engine API.
@@ -66,6 +69,11 @@ func DefaultThresholds() Thresholds {
 	}
 }
 
+// Commenter пишет пару фраз персонажа к готовому отчёту. Цифры в отчёте считает код, не LLM.
+type Commenter interface {
+	Comment(ctx context.Context, prompt, report string) (string, error)
+}
+
 type Config struct {
 	ChatID int64
 	// Projects — compose-проекты, которыми бот управляет. Чужие контейнеры он не видит и не трогает.
@@ -74,8 +82,10 @@ type Config struct {
 	Protected   []string
 	TriggerPath string
 	Location    *time.Location
-	ReportAt    string // «23:55»
+	Report      Schedule // пустой At — отчёта нет
 	Thresholds  Thresholds
+	// Alerts — включённые категории алертов (см. category). nil — все.
+	Alerts []string
 	// HeartbeatURL — адрес внешнего пульса (healthchecks.io). Пусто — пульса нет.
 	HeartbeatURL string
 }
@@ -95,15 +105,18 @@ type File struct {
 type Button struct{ Text, Data string }
 
 type Service struct {
-	cfg     Config
-	docker  Docker
-	llm     LLM // nil — шлюз не настроен
-	metrics Metrics
-	store   *Store
-	alerts  *alert.Engine
-	send    func(ctx context.Context, text string) error
-	log     *slog.Logger
-	now     func() time.Time
+	cfg       Config
+	docker    Docker
+	llm       LLM // nil — шлюз не настроен
+	metrics   Metrics
+	store     *Store
+	alerts    *alert.Engine
+	voice     *voice.Voice // nil — без фраз
+	commenter Commenter    // nil — отчёт без LLM
+	send      func(ctx context.Context, text string) error
+	sendGIF   func(ctx context.Context, fileID, caption string) error
+	log       *slog.Logger
+	now       func() time.Time
 
 	mu     sync.Mutex
 	kills  map[string]time.Time // когда контейнер останавливали штатно: его die — не авария
@@ -113,11 +126,15 @@ type Service struct {
 }
 
 type Deps struct {
-	Docker  Docker
-	LLM     LLM
-	Metrics Metrics
-	Store   *Store
-	Send    func(ctx context.Context, text string) error
+	Docker    Docker
+	LLM       LLM
+	Metrics   Metrics
+	Store     *Store
+	Voice     *voice.Voice
+	Commenter Commenter
+	Send      func(ctx context.Context, text string) error
+	// SendGIF — GIF по file_id Telegram с подписью. nil — GIF не шлются.
+	SendGIF func(ctx context.Context, fileID, caption string) error
 	Log     *slog.Logger
 	Now     func() time.Time
 }
@@ -129,10 +146,11 @@ func New(cfg Config, d Deps) *Service {
 	if cfg.Location == nil {
 		cfg.Location = time.Local
 	}
-	eng := alert.NewEngine(30 * time.Minute)
+	eng := alert.NewEngine(time.Hour)
 	eng.Now = d.Now
 	return &Service{
 		cfg: cfg, docker: d.Docker, llm: d.LLM, metrics: d.Metrics, store: d.Store, send: d.Send, log: d.Log, now: d.Now,
+		voice: d.Voice, commenter: d.Commenter, sendGIF: d.SendGIF,
 		alerts: eng,
 		kills:  map[string]time.Time{},
 		images: map[string]string{},
@@ -142,15 +160,114 @@ func New(cfg Config, d Deps) *Service {
 func (s *Service) managed(project string) bool { return slices.Contains(s.cfg.Projects, project) }
 
 // alert передаёт состояние движку и отправляет сообщение, если движок решил, что пора.
-func (s *Service) alert(ctx context.Context, key string, level alert.Level, text string) {
-	msg := s.alerts.Update(key, level, text)
-	if msg == "" {
+// event — имя файла фраз (temp, died, ...). Первая строка сообщения — факт, фраза персонажа идёт после.
+func (s *Service) alert(ctx context.Context, event, key string, level alert.Level, text string) {
+	if !s.enabled(category(key)) {
+		return
+	}
+	m := s.alerts.Update(key, level, text)
+	if m.Text == "" {
 		return
 	}
 	s.log.Info("алерт", "key", key, "level", level.String())
-	if err := s.send(ctx, msg); err != nil {
+	name := key
+	if _, after, ok := strings.Cut(key, ":"); ok {
+		name = after
+	}
+	var line, gif string
+	switch m.Kind {
+	case alert.Repeat:
+		// Повтор без GIF: персонаж злится сильнее с каждым разом.
+		line = s.voice.Line(fmt.Sprintf("repeat-%d", min(m.Repeat, 3)), name)
+	case alert.Recovered:
+		line, gif = s.voice.Line("recovered", name), "recovered"
+	default:
+		line, gif = s.voice.Line(event, name), gifEvent(event)
+	}
+	if err := s.notify(ctx, withLine(m.Text, line), gif); err != nil {
 		s.log.Error("алерт не отправлен", "key", key, "err", err)
 	}
+}
+
+// category — группа алерта для фильтра OPS_ALERTS.
+func category(key string) string {
+	switch {
+	case key == "cpu-temp" || key == "ssd-temp":
+		return "temp"
+	case strings.HasPrefix(key, "disk:"):
+		return "disk"
+	case strings.HasPrefix(key, "container:") || key == "docker":
+		return "service"
+	case strings.HasPrefix(key, "health:"):
+		return "health"
+	case key == "power":
+		return "battery"
+	case key == "llm:gateway" || key == "llm:prices":
+		return "gateway"
+	case strings.HasPrefix(key, "llm:"):
+		return "llm"
+	}
+	return key // mem, swap, load
+}
+
+func (s *Service) enabled(cat string) bool {
+	return s.cfg.Alerts == nil || slices.Contains(s.cfg.Alerts, cat)
+}
+
+// gifEvents — события, к которым можно привязать GIF командой /gif.
+var gifEvents = []string{"temp", "disk", "died", "recovered", "update-ok", "update-fail", "llm-limit", "balance", "report", "backup-fail"}
+
+// gifEvent — общий GIF для близких событий: любая остановка сервиса — «died».
+func gifEvent(event string) string {
+	switch event {
+	case "oom", "restart-loop", "docker":
+		return "died"
+	}
+	return event
+}
+
+func withLine(text, line string) string {
+	if line == "" {
+		return text
+	}
+	return text + "\n\n" + line
+}
+
+// say — ответ на команду с фразой персонажа.
+func (s *Service) say(text, event, name string) string {
+	return withLine(text, s.voice.Line(event, name))
+}
+
+// maxCaption — предел подписи к GIF в Telegram 1024 символа; длиннее — GIF без подписи и текст отдельно.
+const maxCaption = 1000
+
+// notify шлёт текст, с GIF события, если она есть. GIF не ушла — тот же текст обычным сообщением.
+func (s *Service) notify(ctx context.Context, text, gif string) error {
+	if id := s.pickGIF(ctx, gif); id != "" {
+		caption, rest := text, ""
+		if utf8.RuneCountInString(text) > maxCaption {
+			caption, rest = "", text
+		}
+		err := s.sendGIF(ctx, id, caption)
+		if err == nil && rest == "" {
+			return nil
+		}
+		if err != nil {
+			s.log.Warn("GIF не отправлен, шлю текст", "event", gif, "err", err)
+		}
+	}
+	return s.send(ctx, text)
+}
+
+func (s *Service) pickGIF(ctx context.Context, event string) string {
+	if event == "" || s.sendGIF == nil {
+		return ""
+	}
+	ids, err := s.store.GIFs(ctx, event)
+	if err != nil || len(ids) == 0 {
+		return ""
+	}
+	return ids[rand.IntN(len(ids))]
 }
 
 // version — короткая версия образа: sha коммита из CI, иначе метка version, иначе тег.

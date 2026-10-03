@@ -32,16 +32,28 @@ const help = `Команды:
 /update — проверить обновления сейчас
 /usage — расход LLM за месяц и за сегодня
 /topup <сумма> — записать пополнение Gemini в долларах
-/balance [сумма] — остаток; с суммой — сверка с AI Studio`
+/balance [сумма] — остаток; с суммой — сверка с AI Studio
+/gif <событие> — ответом на GIF: показывать её при событии; /gif — список`
 
-// Handle выполняет команду из чата. Сообщения не из OPS_CHAT_ID молча игнорируются:
-// бот управляет сервером, отвечать посторонним нельзя даже отказом.
+// Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили.
+type Incoming struct {
+	ChatID int64
+	Text   string
+	GIF    string
+}
+
 func (s *Service) Handle(ctx context.Context, chatID int64, text string) []Reply {
-	if chatID != s.cfg.ChatID {
-		s.log.Warn("сообщение из чужого чата проигнорировано", "chat_id", chatID)
+	return s.HandleMessage(ctx, Incoming{ChatID: chatID, Text: text})
+}
+
+// HandleMessage выполняет команду из чата. Сообщения не из OPS_CHAT_ID молча игнорируются:
+// бот управляет сервером, отвечать посторонним нельзя даже отказом.
+func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
+	if in.ChatID != s.cfg.ChatID {
+		s.log.Warn("сообщение из чужого чата проигнорировано", "chat_id", in.ChatID)
 		return nil
 	}
-	cmd, args := parseCommand(text)
+	cmd, args := parseCommand(in.Text)
 	var r Reply
 	switch cmd {
 	case "status":
@@ -68,8 +80,10 @@ func (s *Service) Handle(ctx context.Context, chatID int64, text string) []Reply
 		r = s.cmdLedger(ctx, "topup", args)
 	case "balance":
 		r = s.cmdLedger(ctx, "set", args)
+	case "gif":
+		r = s.cmdGIF(ctx, args, in.GIF)
 	default:
-		r = Reply{Text: help}
+		r = Reply{Text: s.say(help, "help", "")}
 	}
 	return []Reply{r}
 }
@@ -97,7 +111,10 @@ func parseCommand(text string) (string, []string) {
 	return strings.ToLower(cmd), f[1:]
 }
 
-var errNotFound = errors.New("не найден")
+var (
+	errNotFound = errors.New("не найден")
+	errForeign  = errors.New("не из проектов homelab, им бот не управляет")
+)
 
 // find ищет контейнер по имени или по имени сервиса compose, только среди своих проектов.
 func (s *Service) find(ctx context.Context, name string) (docker.Container, error) {
@@ -108,7 +125,7 @@ func (s *Service) find(ctx context.Context, name string) (docker.Container, erro
 	for _, c := range list {
 		if c.Name() == name || c.Labels[docker.LabelService] == name {
 			if !s.managed(c.Project()) {
-				return docker.Container{}, fmt.Errorf("%s не из проектов homelab, им бот не управляет", name)
+				return docker.Container{}, fmt.Errorf("%s %w", name, errForeign)
 			}
 			return c, nil
 		}
@@ -121,6 +138,9 @@ func (s *Service) withContainer(ctx context.Context, args []string, fn func(cont
 		return Reply{Text: "Нужно имя сервиса, например: /restart budget-bot"}
 	}
 	c, err := s.find(ctx, args[0])
+	if errors.Is(err, errForeign) {
+		return Reply{Text: s.say(err.Error(), "cmd-denied", args[0])}
+	}
 	if err != nil {
 		return Reply{Text: err.Error()}
 	}
@@ -138,14 +158,14 @@ func (s *Service) restart(ctx context.Context, c docker.Container) Reply {
 	if err := s.docker.Restart(ctx, c.ID); err != nil {
 		return Reply{Text: fmt.Sprintf("%s не перезапущен: %v", c.Name(), err)}
 	}
-	return Reply{Text: c.Name() + " перезапущен. Лог: /logs " + c.Name()}
+	return Reply{Text: s.say(c.Name()+" перезапущен. Лог: /logs "+c.Name(), "cmd-restart", c.Name())}
 }
 
 func (s *Service) start(ctx context.Context, c docker.Container) Reply {
 	if err := s.docker.Start(ctx, c.ID); err != nil {
 		return Reply{Text: fmt.Sprintf("%s не запущен: %v", c.Name(), err)}
 	}
-	return Reply{Text: c.Name() + " запущен."}
+	return Reply{Text: s.say(c.Name()+" запущен.", "cmd-start", c.Name())}
 }
 
 func (s *Service) askStop(_ context.Context, c docker.Container) Reply {
@@ -153,8 +173,8 @@ func (s *Service) askStop(_ context.Context, c docker.Container) Reply {
 		return Reply{Text: c.Name() + " из чата не останавливается: после этого бот не сможет его запустить."}
 	}
 	return Reply{
-		Text:    "Остановить " + c.Name() + "? Пока он остановлен, обновления его не запускают.",
-		Buttons: [][]Button{{{Text: "Остановить " + c.Name(), Data: "stop:" + c.Name()}, {Text: "Отмена", Data: "cancel"}}},
+		Text:    s.say("Остановить "+c.Name()+"? Пока он остановлен, обновления его не запускают.", "cmd-stop-ask", c.Name()),
+		Buttons: [][]Button{{{Text: "Вырубай", Data: "stop:" + c.Name()}, {Text: "Отставить", Data: "cancel"}}},
 	}
 }
 
@@ -166,7 +186,7 @@ func (s *Service) stop(ctx context.Context, c docker.Container) Reply {
 	if err := s.docker.Stop(ctx, c.ID); err != nil {
 		return Reply{Text: fmt.Sprintf("%s не остановлен: %v", c.Name(), err)}
 	}
-	return Reply{Text: c.Name() + " остановлен. Запустить: /start " + c.Name()}
+	return Reply{Text: s.say(c.Name()+" остановлен. Запустить: /start "+c.Name(), "cmd-stopped", c.Name())}
 }
 
 func (s *Service) cmdLogs(ctx context.Context, args []string) Reply {
@@ -214,7 +234,7 @@ func (s *Service) cmdUpdate() Reply {
 	if err := os.WriteFile(s.cfg.TriggerPath, []byte(s.now().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return Reply{Text: "Не удалось запустить обновление: " + err.Error()}
 	}
-	return Reply{Text: "Проверка обновлений запущена. Если что-то обновится, итог придёт отдельным сообщением."}
+	return Reply{Text: s.say("Проверка обновлений запущена. Если что-то обновится, итог придёт отдельным сообщением.", "cmd-update", "")}
 }
 
 func (s *Service) cmdStatus(ctx context.Context) Reply {
@@ -223,7 +243,9 @@ func (s *Service) cmdStatus(ctx context.Context) Reply {
 		return Reply{Text: "Docker не ответил: " + err.Error()}
 	}
 	var b strings.Builder
-	if active := s.alerts.Active(); len(active) > 0 {
+	active := s.alerts.Active()
+	allRunning := true
+	if len(active) > 0 {
 		b.WriteString("Активные алерты:\n")
 		for _, a := range active {
 			fmt.Fprintf(&b, "- %s: %s\n", a.Level, a.Text)
@@ -246,12 +268,17 @@ func (s *Service) cmdStatus(ctx context.Context) Reply {
 		b.WriteString(p + "\n")
 		for _, c := range cs {
 			fmt.Fprintf(&b, "  %s — %s, %s\n", c.Name(), s.stateLine(ctx, c), s.version(ctx, c))
+			allRunning = allRunning && c.State == "running"
 		}
 	}
 	if b.Len() == 0 {
-		b.WriteString("Контейнеров homelab нет.")
+		return Reply{Text: "Контейнеров homelab нет."}
 	}
-	return Reply{Text: strings.TrimSpace(b.String())}
+	event := "status-bad"
+	if allRunning && len(active) == 0 {
+		event = "status-ok"
+	}
+	return Reply{Text: s.say(strings.TrimSpace(b.String()), event, "")}
 }
 
 func (s *Service) stateLine(ctx context.Context, c docker.Container) string {
@@ -271,4 +298,44 @@ func (s *Service) stateLine(ctx context.Context, c docker.Container) string {
 	default:
 		return fmt.Sprintf("остановлен %s назад, код %d", since(s.now().Sub(insp.State.FinishedAt)), insp.State.ExitCode)
 	}
+}
+
+// cmdGIF: «/gif temp» ответом на GIF — запомнить; «/gif» — список; «/gif clear temp» — забыть все GIF события.
+func (s *Service) cmdGIF(ctx context.Context, args []string, fileID string) Reply {
+	events := strings.Join(gifEvents, ", ")
+	if len(args) == 0 {
+		counts, err := s.store.GIFCounts(ctx)
+		if err != nil {
+			return Reply{Text: err.Error()}
+		}
+		var b strings.Builder
+		b.WriteString("GIF по событиям:\n")
+		for _, e := range gifEvents {
+			fmt.Fprintf(&b, "%s: %d\n", e, counts[e])
+		}
+		b.WriteString("\nДобавить: ответь на GIF командой /gif <событие> или пришли GIF с такой подписью. Убрать: /gif clear <событие>")
+		return Reply{Text: b.String()}
+	}
+	if args[0] == "clear" {
+		if len(args) < 2 || !slices.Contains(gifEvents, args[1]) {
+			return Reply{Text: "Какое событие очистить? " + events}
+		}
+		n, err := s.store.ClearGIFs(ctx, args[1])
+		if err != nil {
+			return Reply{Text: err.Error()}
+		}
+		return Reply{Text: fmt.Sprintf("%s: убрано GIF %d.", args[1], n)}
+	}
+	event := args[0]
+	if !slices.Contains(gifEvents, event) {
+		return Reply{Text: "Нет такого события. Есть: " + events}
+	}
+	if fileID == "" {
+		return Reply{Text: "Нужна GIF: ответь командой /gif " + event + " на сообщение с GIF или пришли GIF с этой подписью."}
+	}
+	if err := s.store.AddGIF(ctx, event, fileID); err != nil {
+		return Reply{Text: err.Error()}
+	}
+	ids, _ := s.store.GIFs(ctx, event)
+	return Reply{Text: fmt.Sprintf("Запомнил для %s, всего %d.", event, len(ids))}
 }
