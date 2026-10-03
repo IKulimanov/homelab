@@ -95,6 +95,8 @@ type Reply struct {
 	Text    string
 	File    *File
 	Buttons [][]Button
+	// NoPreview — без превью ссылки: Telegram открыл бы одноразовую ссылку входа сам и потратил её.
+	NoPreview bool
 }
 
 type File struct {
@@ -115,6 +117,7 @@ type Service struct {
 	commenter Commenter    // nil — отчёт без LLM
 	send      func(ctx context.Context, text string) error
 	sendGIF   func(ctx context.Context, fileID, caption string) error
+	panel     func(ctx context.Context) (string, error) // nil — панель не настроена
 	log       *slog.Logger
 	now       func() time.Time
 
@@ -135,8 +138,10 @@ type Deps struct {
 	Send      func(ctx context.Context, text string) error
 	// SendGIF — GIF по file_id Telegram с подписью. nil — GIF не шлются.
 	SendGIF func(ctx context.Context, fileID, caption string) error
-	Log     *slog.Logger
-	Now     func() time.Time
+	// Panel — одноразовая ссылка входа в панель. nil — команда /panel отвечает, что панели нет.
+	Panel func(ctx context.Context) (string, error)
+	Log   *slog.Logger
+	Now   func() time.Time
 }
 
 func New(cfg Config, d Deps) *Service {
@@ -150,7 +155,7 @@ func New(cfg Config, d Deps) *Service {
 	eng.Now = d.Now
 	return &Service{
 		cfg: cfg, docker: d.Docker, llm: d.LLM, metrics: d.Metrics, store: d.Store, send: d.Send, log: d.Log, now: d.Now,
-		voice: d.Voice, commenter: d.Commenter, sendGIF: d.SendGIF,
+		voice: d.Voice, commenter: d.Commenter, sendGIF: d.SendGIF, panel: d.Panel,
 		alerts: eng,
 		kills:  map[string]time.Time{},
 		images: map[string]string{},

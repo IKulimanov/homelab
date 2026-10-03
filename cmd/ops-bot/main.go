@@ -100,6 +100,15 @@ func run(log *slog.Logger) error {
 		}
 	}
 
+	if t := os.Getenv("PANEL_TOKEN"); t != "" {
+		pc := &ops.PanelClient{
+			Base:  envOr("PANEL_INTERNAL_URL", "http://panel:8081"),
+			Token: t,
+			HTTP:  &http.Client{Timeout: 10 * time.Second},
+		}
+		deps.Panel = pc.LoginLink
+	}
+
 	var svc *ops.Service
 	b, err := bot.New(token,
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, u *models.Update) { handle(ctx, b, u, svc, log) }),
@@ -108,7 +117,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("создать бота: %w", err)
 	}
-	deps.Send = func(ctx context.Context, text string) error { return sendText(ctx, b, chatID, text, nil) }
+	deps.Send = func(ctx context.Context, text string) error { return sendText(ctx, b, chatID, text, nil, false) }
 	deps.SendGIF = func(ctx context.Context, fileID, caption string) error {
 		_, err := b.SendAnimation(ctx, &bot.SendAnimationParams{
 			ChatID: chatID, Animation: &models.InputFileString{Data: fileID}, Caption: caption,
@@ -148,6 +157,7 @@ var commands = []models.BotCommand{
 	{Command: "topup", Description: "записать пополнение Gemini"},
 	{Command: "balance", Description: "баланс Gemini"},
 	{Command: "gif", Description: "GIF для событий"},
+	{Command: "panel", Description: "ссылка входа в панель"},
 }
 
 func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service, log *slog.Logger) {
@@ -198,7 +208,7 @@ func reply(ctx context.Context, b *bot.Bot, chatID int64, r ops.Reply, log *slog
 			Caption:  r.Text,
 		})
 	} else {
-		err = sendText(ctx, b, chatID, r.Text, r.Buttons)
+		err = sendText(ctx, b, chatID, r.Text, r.Buttons, r.NoPreview)
 	}
 	if err != nil {
 		log.Error("ответ не отправлен", "err", err)
@@ -207,10 +217,13 @@ func reply(ctx context.Context, b *bot.Bot, chatID int64, r ops.Reply, log *slog
 
 // sendText отправляет текст без разметки: в логах и именах встречаются символы, которые сломали бы HTML.
 // Длинный текст режется по строкам на части в пределах лимита Telegram.
-func sendText(ctx context.Context, b *bot.Bot, chatID int64, text string, buttons [][]ops.Button) error {
+func sendText(ctx context.Context, b *bot.Bot, chatID int64, text string, buttons [][]ops.Button, noPreview bool) error {
 	parts := ops.SplitText(text, 4000)
 	for i, p := range parts {
 		params := &bot.SendMessageParams{ChatID: chatID, Text: p}
+		if noPreview {
+			params.LinkPreviewOptions = &models.LinkPreviewOptions{IsDisabled: bot.True()}
+		}
 		if i == len(parts)-1 && len(buttons) > 0 {
 			params.ReplyMarkup = keyboard(buttons)
 		}

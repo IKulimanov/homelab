@@ -398,3 +398,15 @@ func TestSeriesAveragesByStep(t *testing.T) {
 		t.Fatalf("точки: %+v", pts)
 	}
 }
+
+func TestPanelCommandSendsLinkWithoutPreview(t *testing.T) {
+	f := newFixture(t)
+	if r := f.svc.Handle(context.Background(), ownChat, "/panel"); !strings.Contains(r[0].Text, "не настроена") {
+		t.Fatalf("без панели: %q", r[0].Text)
+	}
+	f.svc.panel = func(context.Context) (string, error) { return "http://192.168.1.50:8800/login?t=abc", nil }
+	r := f.svc.Handle(context.Background(), ownChat, "/panel")
+	if !strings.Contains(r[0].Text, "http://192.168.1.50:8800/login?t=abc") || !r[0].NoPreview {
+		t.Fatalf("ответ %+v", r[0])
+	}
+}
