@@ -36,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /admin/status", s.admin(s.status))
 	mux.HandleFunc("GET /admin/usage", s.admin(s.usage))
+	mux.HandleFunc("GET /admin/daily", s.admin(s.daily))
 	mux.HandleFunc("POST /admin/topup", s.admin(s.ledger("topup")))
 	mux.HandleFunc("POST /admin/balance", s.admin(s.ledger("set")))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {

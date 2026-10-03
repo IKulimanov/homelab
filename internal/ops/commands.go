@@ -33,7 +33,8 @@ const help = `Команды:
 /usage — расход LLM за месяц и за сегодня
 /topup <сумма> — записать пополнение Gemini в долларах
 /balance [сумма] — остаток; с суммой — сверка с AI Studio
-/gif <событие> — ответом на GIF: показывать её при событии; /gif — список`
+/gif <событие> — ответом на GIF: показывать её при событии; /gif — список
+/panel — ссылка входа в панель «Планета Экспресс»`
 
 // Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили.
 type Incoming struct {
@@ -82,6 +83,8 @@ func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
 		r = s.cmdLedger(ctx, "set", args)
 	case "gif":
 		r = s.cmdGIF(ctx, args, in.GIF)
+	case "panel":
+		r = s.cmdPanel(ctx)
 	default:
 		r = Reply{Text: s.say(help, "help", "")}
 	}
@@ -235,6 +238,18 @@ func (s *Service) cmdUpdate() Reply {
 		return Reply{Text: "Не удалось запустить обновление: " + err.Error()}
 	}
 	return Reply{Text: s.say("Проверка обновлений запущена. Если что-то обновится, итог придёт отдельным сообщением.", "cmd-update", "")}
+}
+
+func (s *Service) cmdPanel(ctx context.Context) Reply {
+	if s.panel == nil {
+		return Reply{Text: "Панель не настроена: нужен PANEL_TOKEN в /srv/secrets/homelab.env."}
+	}
+	link, err := s.panel(ctx)
+	if err != nil {
+		s.log.Warn("ссылка входа в панель", "err", err)
+		return Reply{Text: "Панель не ответила: " + err.Error()}
+	}
+	return Reply{Text: "Вход в штаб, ссылка живёт 5 минут и работает один раз:\n" + link, NoPreview: true}
 }
 
 func (s *Service) cmdStatus(ctx context.Context) Reply {

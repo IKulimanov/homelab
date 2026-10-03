@@ -1,0 +1,65 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Сейф Гермеса</h1>
+    <p>Все секреты сервера в одном месте: <code>/srv/secrets</code>. Бюрократ высшего разряда проверит каждую запятую.</p>
+  </div>
+</header>
+{{if not $v.Files}}
+<div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">В /srv/secrets пусто. Запусти на сервере <code>sudo ./scripts/install.sh</code>.</span></div>
+{{else}}
+<div class="vault">
+  <nav class="card files" aria-label="Файлы секретов">
+    {{range $v.Files}}
+    <a href="/vault/{{.Name}}" {{if eq .Name $v.Current}}class="on" aria-current="page"{{end}}>
+      <span>{{.Name}}</span><span {{if gt .Missing 0}}class="c-warn"{{end}}>{{.Note}}</span>
+    </a>
+    {{end}}
+  </nav>
+
+  <section class="card keys">
+    <div class="row between">
+      <h2 class="mono">{{$v.Current}}</h2>
+      {{if $v.Hint}}<span class="muted small">{{$v.Hint}}</span>{{end}}
+    </div>
+    {{if $v.ReadOnly}}<div class="note ro">Только просмотр. Правка этих значений пересоздала бы медиастек, а его не трогаем. Меняется руками на сервере в плановое окно.</div>{{end}}
+    {{with $v.Saved}}
+      <div class="stamp" aria-hidden="true">УТВЕРЖДЕНО</div>
+      {{if .Waiting}}
+      <div class="note warn" role="status" data-poll-run>Сохранено: <code>{{.Keys}}</code>. Ждём update.sh — он применит изменения. Страница обновится сама.</div>
+      {{else if .Results}}
+        {{range .Results}}<div class="note {{if eq .Result "ok"}}ok{{else}}bad{{end}}" role="status">{{.Svc}}: {{.Text}}{{if .To}} · {{.To}}{{end}}</div>{{end}}
+      {{else}}
+      <div class="note ok" role="status">Сохранено: <code>{{.Keys}}</code>. update.sh отработал, пересоздавать ничего не пришлось.</div>
+      {{end}}
+    {{end}}
+    <form method="post" action="/vault/{{$v.Current}}" class="stack" autocomplete="off">
+      {{range $v.Keys}}
+      <div class="inner key {{if and .Required (not .Set)}}need{{end}}">
+        <span>
+          <b>{{.Key}}</b>
+          {{if .Required}}<span class="badge {{if .Set}}ok{{else}}warn{{end}}" style="align-self: flex-start">{{if .Set}}обязателен{{else}}обязателен · пусто{{end}}</span>{{end}}
+        </span>
+        <label>
+          <span class="sr">Значение {{.Key}}</span>
+          <input type="password" name="v_{{.Key}}" placeholder="{{if .Set}}•••••••• задано, пусто — не менять{{else}}не задано{{end}}" data-key="{{.Key}}" {{if $v.ReadOnly}}disabled{{end}} autocomplete="new-password" spellcheck="false">
+          <input type="hidden" name="t_{{.Key}}" value="">
+          {{if .Help}}<span class="help">{{.Help}}</span>{{end}}
+          <span class="shown" data-shown hidden></span>
+        </label>
+        {{if .Set}}<button type="button" class="btn small" data-reveal="{{.Key}}" data-file="{{$v.Current}}">Показать</button>{{else}}<span></span>{{end}}
+      </div>
+      {{else}}
+      <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">В файле нет ни одного ключа.</span></div>
+      {{end}}
+      {{if not $v.ReadOnly}}
+      <div class="row between">
+        <span class="muted small">Сохраняются только поля, которые ты трогал. После сохранения update.sh пересоздаст сервис с новыми ключами.</span>
+        <button class="btn green" type="submit">Сохранить и применить</button>
+      </div>
+      {{end}}
+    </form>
+  </section>
+</div>
+{{end}}
+{{end}}

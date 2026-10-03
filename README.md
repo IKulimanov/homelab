@@ -10,6 +10,7 @@
 | `ops-bot` | platform | Бендер: алерты о важном, недельный отчёт, команды в Telegram, [подробно](docs/monitoring.md) | Docker, датчики хоста | `/srv/ops-bot/data` |
 | `llm-gateway` | platform | учёт токенов, лимиты и баланс Gemini, [подробно](docs/llm.md) | Gemini API | `/srv/llm-gateway/data` |
 | `dozzle` | platform | логи всех контейнеров в браузере, `http://<LAN_IP>:8889`, только из дома | Docker | нет |
+| `panel` | platform | веб-панель «Планета Экспресс»: сервисы, логи, секреты, базы, LLM, доставки, `http://<LAN_IP>:8800`, только из дома, [подробно](docs/panel.md) | Docker, `llm-gateway`, `ops-bot` | `/srv/panel/data` |
 | `budget-bot` | apps | учёт общих трат | Gemini через шлюз, SQLite | `/srv/budget-bot/data` |
 | `wellbeing-bot` | apps | дневник самочувствия | Gemini через шлюз, SQLite | `/srv/wellbeing-bot/data` |
 | `nutrition-assistant` | apps | учёт питания и веса | Gemini через шлюз, Anthropic, OpenAI, SQLite | `/srv/nutrition-assistant/data` |
@@ -18,6 +19,8 @@
 Версии не пишутся здесь, их показывают `/status` и `status.sh`.
 
 ## Каждый день
+
+Почти всё из таблицы есть и в панели: `/panel` в служебном боте присылает ссылку входа.
 
 | Что | Telegram | На сервере |
 |---|---|---|
@@ -29,6 +32,8 @@
 | запустить остановленный | `/start <сервис>` | `docker start <сервис>` |
 | обновить всё сейчас | `/update` | `sudo systemctl start homelab-update-now` |
 | копия базы сейчас | | `sudo /opt/homelab/scripts/backup.sh <сервис> manual` |
+| секреты сервиса | | панель, «Сейф Гермеса» |
+| запрос к базе | | панель, «Лаборатория» |
 | расход LLM, баланс | `/usage`, `/balance` | |
 | записать пополнение Gemini | `/topup 10` | |
 | GIF для событий | `/gif` | |
@@ -52,6 +57,8 @@
 | `/srv/<сервис>/data` | база сервиса |
 | `/srv/nutrition-assistant/config.yaml` | настройки `nutrition-assistant` |
 | `/srv/secrets/media.env` | пути и PUID медиастека |
+| `/srv/panel/data` | база панели: сессии, журнал действий; копии баз из Лаборатории |
+| `/var/lib/homelab` | история обновлений и сводка копий для панели |
 | `/data` | фильмы, сериалы, конфиги медиастека |
 | `/mnt/backup/<сервис>` | копии баз: каждый день в 3:30 и перед каждым обновлением, 30 дней |
 
@@ -60,6 +67,7 @@
 - [server-setup.md](docs/server-setup.md) — установка на сервер
 - [migration.md](docs/migration.md) — переезд со старой установки и уборка
 - [monitoring.md](docs/monitoring.md) — служебный бот: команды, алерты, пороги
+- [panel.md](docs/panel.md) — веб-панель: вход, экраны, кнопки
 - [llm.md](docs/llm.md) — шлюз LLM: ключи, лимиты, баланс
 - [new-service.md](docs/new-service.md) — как добавить сервис
 - [update-rollback.md](docs/update-rollback.md) — обновление и откат

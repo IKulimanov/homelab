@@ -375,3 +375,61 @@ func TestSplitTextByLines(t *testing.T) {
 		t.Fatalf("короткий текст разбит: %v", got)
 	}
 }
+
+func TestSeriesAveragesByStep(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Unix(1_800_000_000, 0) // кратно 600
+	for i, v := range []float64{10, 20, 30, 40} {
+		at := base.Add(time.Duration(i) * 5 * time.Minute)
+		if err := store.AddSamples(ctx, at, map[string]float64{"cpu_temp": v, "mem": 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pts, err := store.Series(ctx, "cpu_temp", base, base.Add(time.Hour), 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pts) != 2 || pts[0].V != 15 || pts[1].V != 35 || !pts[1].T.Equal(base.Add(10*time.Minute)) {
+		t.Fatalf("точки: %+v", pts)
+	}
+}
+
+func TestLatestTakesNewestFreshValue(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "ops.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Unix(1_800_000_000, 0)
+	_ = store.AddSamples(ctx, base.Add(-time.Hour), map[string]float64{"swap": 5})
+	_ = store.AddSamples(ctx, base.Add(-2*time.Minute), map[string]float64{"cpu_temp": 40, "mem": 50})
+	_ = store.AddSamples(ctx, base.Add(-time.Minute), map[string]float64{"cpu_temp": 45})
+	got, err := store.Latest(ctx, base.Add(-10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["cpu_temp"] != 45 || got["mem"] != 50 {
+		t.Fatalf("последние значения: %v", got)
+	}
+	if _, ok := got["swap"]; ok {
+		t.Fatalf("старый замер не должен попасть: %v", got)
+	}
+}
+
+func TestPanelCommandSendsLinkWithoutPreview(t *testing.T) {
+	f := newFixture(t)
+	if r := f.svc.Handle(context.Background(), ownChat, "/panel"); !strings.Contains(r[0].Text, "не настроена") {
+		t.Fatalf("без панели: %q", r[0].Text)
+	}
+	f.svc.panel = func(context.Context) (string, error) { return "http://192.168.1.50:8800/login?t=abc", nil }
+	r := f.svc.Handle(context.Background(), ownChat, "/panel")
+	if !strings.Contains(r[0].Text, "http://192.168.1.50:8800/login?t=abc") || !r[0].NoPreview {
+		t.Fatalf("ответ %+v", r[0])
+	}
+}

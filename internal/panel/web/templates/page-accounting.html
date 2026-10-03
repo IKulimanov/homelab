@@ -1,0 +1,61 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Бухгалтерия</h1>
+    <p>Расход LLM через шлюз{{with $v.Status}} за {{.Month}}{{end}}. Лимиты меняются в git: <code>stacks/platform/config/llm-gateway.yaml</code>.</p>
+  </div>
+</header>
+{{if $v.Error}}<div class="note bad">{{$v.Error}}</div>{{end}}
+{{with $v.Status}}
+<section class="grid" style="--min: 300px">
+  <div class="card">
+    <h2>Баланс</h2>
+    {{if .Balance.Known}}
+      <span class="big-num {{if $v.LowBal}}c-bad{{else}}c-ok{{end}}">{{usd .Balance.USD}}</span>
+      <span class="muted small">{{with .Balance.SetAt}}сверка {{date .}}{{end}} · пополнения {{usd .Balance.Topups}} · расход {{usd .Balance.Spent}}</span>
+      {{if $v.LowBal}}<div class="note bad">Меньше {{usd .BalanceAlertUSD}}. Пора пополнить, иначе боты замолчат.</div>{{end}}
+    {{else}}
+      <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Баланс ещё ни разу не сверяли. Посмотри сумму в AI Studio и сверь ниже.</span></div>
+    {{end}}
+    <form method="post" action="/accounting/ledger" class="row" data-confirm="Записать пополнение в книгу Гермеса?" data-confirm-title="Заткнись и возьми мои деньги">
+      <input type="hidden" name="kind" value="topup">
+      <label class="sr" for="topup">Сумма пополнения, $</label>
+      <input type="text" inputmode="decimal" id="topup" name="usd" placeholder="10" style="width: 110px" required>
+      <button class="btn orange" type="submit">Заткнись и возьми мои деньги</button>
+    </form>
+    <form method="post" action="/accounting/ledger" class="row" data-confirm="Баланс станет ровно этой суммой. Расход до этого момента забудется." data-confirm-title="Сверить с AI Studio?">
+      <input type="hidden" name="kind" value="set">
+      <label class="sr" for="set">Баланс в AI Studio, $</label>
+      <input type="text" inputmode="decimal" id="set" name="usd" placeholder="12,40" style="width: 110px" required>
+      <button class="btn" type="submit">Сверить с AI Studio</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Расход к общему лимиту</h2>
+    <span class="big-num c-{{$v.Total.Level}}">{{usd $v.Total.SpentUSD}}</span>
+    <span class="muted small">из {{usd $v.Total.LimitUSD}} за месяц</span>
+    <div class="bar big"><i class="{{$v.Total.Level}}" style="width: {{pct $v.Total.Pct}}%"></i></div>
+    {{if .UnpricedModels}}<div class="note warn">Нет цены для моделей: <code>{{range $i, $m := .UnpricedModels}}{{if $i}}, {{end}}{{$m}}{{end}}</code>. Их расход считается нулём.</div>{{end}}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Лимиты по сервисам</h2>
+  {{range $v.Clients}}
+  <div class="tank"><span class="mono">{{.Title}}</span><div class="bar big"><i class="{{.Level}}" style="width: {{pct .Pct}}%"></i></div><span class="c-{{.Level}}">{{usd .SpentUSD}} / {{usd .LimitUSD}}</span></div>
+  {{else}}
+  <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Клиентов у шлюза нет.</span></div>
+  {{end}}
+</section>
+{{end}}
+
+{{if $v.Days}}
+<section class="card">
+  <h2>По дням</h2>
+  <div class="days" role="img" aria-label="Расход по дням месяца">
+    {{range $v.Days}}<div title="{{.Day}}: {{usd .CostUSD}}, вызовов {{.Calls}}"><i style="height: {{pct .Pct}}%"></i><span>{{.Day}}</span></div>{{end}}
+  </div>
+</section>
+{{end}}
+{{end}}

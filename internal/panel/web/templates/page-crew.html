@@ -1,0 +1,57 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Экипаж</h1>
+    <p>{{if $v}}{{$v.Summary}}{{else}}Docker не ответил{{end}}</p>
+  </div>
+  <form method="post" action="/update"><input type="hidden" name="back" value="/crew"><button class="btn orange" type="submit">Обновить сейчас</button></form>
+</header>
+{{if $v}}
+<div class="chips">
+  <a href="/crew" {{if eq $v.Filter ""}}class="on"{{end}}>все</a>
+  {{range $v.Stacks}}<a href="/crew?stack={{.}}" {{if eq . $v.Filter}}class="on"{{end}}>{{.}}</a>{{end}}
+</div>
+<section class="grid" style="--min: 320px">
+  {{range $v.Cards}}
+  <article class="card crew-card {{if .Cond.Problem}}bad{{else if eq .Cond.Level "warn"}}warn{{end}}">
+    <div class="top">
+      <div class="stack" style="gap: 4px">
+        <h3>{{.Name}}</h3>
+        <span class="muted small">{{if .Role}}{{.Role}} · {{end}}{{.Stack}}</span>
+      </div>
+      <span class="badge {{.Cond.Level}}">{{.Cond.Text}}</span>
+    </div>
+    <div class="facts">
+      <span class="muted">версия <b>{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{.Version}}</a>{{else}}{{.Version}}{{end}}</b></span>
+      <span class="muted">в работе <b>{{.Uptime}}</b></span>
+      <span class="muted">CPU · память <b>{{.Res}}</b></span>
+    </div>
+    {{if .Missing}}<div class="note warn">Пустые обязательные ключи: <code>{{range $i, $k := .Missing}}{{if $i}}, {{end}}{{$k}}{{end}}</code>. <a href="/vault/{{.Name}}.env">Заполнить в Сейфе</a></div>{{end}}
+    {{if .Installed}}
+    <div class="row">
+      {{if .CanRestart}}
+      <form method="post" action="/crew/{{.Name}}/restart" class="inline" data-confirm="Перезапустить {{.Name}}? Пара секунд простоя." data-confirm-title="Перезапуск">
+        <input type="hidden" name="stack" value="{{$v.Filter}}"><button class="btn small" type="submit">Перезапустить</button>
+      </form>
+      {{end}}
+      {{if .CanStop}}
+      <form method="post" action="/crew/{{.Name}}/stop" class="inline" data-confirm="Сервис останется выключенным, пока его не запустят. update.sh его не поднимет." data-confirm-title="Вырубить {{.Name}}?">
+        <input type="hidden" name="stack" value="{{$v.Filter}}"><button class="btn small danger" type="submit">Остановить</button>
+      </form>
+      {{end}}
+      {{if .CanStart}}
+      <form method="post" action="/crew/{{.Name}}/start" class="inline">
+        <input type="hidden" name="stack" value="{{$v.Filter}}"><button class="btn small green" type="submit">Запустить</button>
+      </form>
+      {{end}}
+      <a class="btn small" href="/logs?svc={{.Name}}">Журнал</a>
+      {{if .Self}}<span class="muted small">это я, себя не вырубаю</span>{{end}}
+    </div>
+    {{end}}
+  </article>
+  {{else}}
+  <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">В этом стеке никого нет.</span></div>
+  {{end}}
+</section>
+{{end}}
+{{end}}

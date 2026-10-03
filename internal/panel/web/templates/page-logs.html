@@ -1,0 +1,27 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Бортовой журнал</h1>
+    <p>{{if $v}}{{if $v.Current}}{{$v.Current}} · {{$v.Version}} · в работе {{$v.Uptime}}{{else}}сервисов нет{{end}}{{else}}Docker не ответил{{end}}</p>
+  </div>
+  {{if $v}}<a class="btn" href="{{$v.Dozzle}}" target="_blank" rel="noopener noreferrer">Открыть в Dozzle</a>{{end}}
+</header>
+{{if $v}}{{if $v.Current}}
+<section class="card">
+  <form method="get" action="/logs" class="row">
+    <label class="sr" for="svc">Сервис</label>
+    <select id="svc" name="svc" data-autosubmit>{{range $v.Names}}<option {{if eq . $v.Current}}selected{{end}}>{{.}}</option>{{end}}</select>
+    <label class="sr" for="tail">Строк</label>
+    <select id="tail" name="tail" data-autosubmit>{{range $v.Tails}}<option value="{{.}}" {{if eq . $v.Tail}}selected{{end}}>{{.}} строк</option>{{end}}</select>
+    <label class="sr" for="filter">Фильтр</label>
+    <input type="text" id="filter" placeholder="фильтр, например error" data-log-filter style="flex: 1 1 200px">
+    <button type="button" class="btn" data-log-pause>Пауза</button>
+    <a class="btn" href="/logs/download?svc={{$v.Current}}&tail=2000">Скачать</a>
+  </form>
+  <div class="term" data-log-src="/logs/stream?svc={{$v.Current}}&tail={{$v.Tail}}" aria-live="off" tabindex="0"><span class="muted cursor">подключаюсь</span></div>
+  <span class="muted small" data-log-state>Поток идёт в реальном времени. Закрой вкладку — поток закроется.</span>
+</section>
+{{else}}
+<div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Контейнеров нет — и журналов нет.</span></div>
+{{end}}{{end}}
+{{end}}

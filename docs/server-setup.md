@@ -31,7 +31,7 @@ Host github.com
   IdentityFile /root/.ssh/homelab_deploy
 ```
 
-Образы ботов приватные, как и их репозитории; образы `ops-bot` и `llm-gateway` собираются в `homelab`.
+Образы ботов приватные, как и их репозитории; образы `ops-bot`, `llm-gateway` и `panel` собираются в `homelab`.
 Для скачивания нужен classic token GitHub только с правом
 `read:packages`: Settings → Developer settings → Personal access tokens → Tokens (classic). Вход делается один раз,
 от root, потому что `update.sh` работает от root:
@@ -55,15 +55,18 @@ sudo /opt/homelab/scripts/install.sh
 `install.sh` проверяет программы и делает следующее:
 - создаёт каталог секретов `/srv/secrets` (права `0700`, владелец 65532 — пользователь панели; root читает всё);
 - создаёт `/srv/secrets/homelab.env` из образца и вписывает в него `DOCKER_GID` (группа docker, через неё `ops-bot`
-  читает `docker.sock`), `LLM_ADMIN_TOKEN` (общий секрет `ops-bot` и `llm-gateway`, вводить его не нужно) и `LAN_IP`
+  читает `docker.sock`), `LLM_ADMIN_TOKEN` (общий секрет `ops-bot` и `llm-gateway`, вводить его не нужно), `PANEL_TOKEN` (общий секрет
+  `ops-bot` и панели для ссылок входа) и `LAN_IP`
   (адрес сервера в домашней сети, на нём слушают Dozzle и панель; проверить, что адрес верный);
 - создаёт `/var/lib/homelab`: там журнал обновлений и сводка копий для панели;
 - создаёт сеть Docker `homelab`: через неё боты ходят в шлюз. Работающие контейнеры это не трогает;
-- создаёт `/srv/ops-bot` и `/srv/llm-gateway` и их файлы секретов;
+- создаёт `/srv/ops-bot`, `/srv/llm-gateway`, `/srv/panel` и их файлы секретов;
 - ставит юниты systemd и включает:
   - `homelab-update.timer` — проверка новых версий раз в 5 минут;
   - `homelab-backup.timer` — копии баз в 3:30;
-  - `homelab-update.path` — обновление по команде `/update` из служебного бота.
+  - `homelab-update.path` — обновление по команде `/update` из служебного бота;
+  - `homelab-apply.path` — кнопки панели «Сохранить и применить», откат, «Обновить сейчас» (`update.sh auto`);
+  - `homelab-backup-now.path` — кнопка панели «Заморозить сейчас».
 
 Ночное обновление медиастека остаётся выключенным, пока жив Watchtower. Его включает шаг 3 в
 [migration.md](migration.md).
@@ -80,11 +83,12 @@ sudo /opt/homelab/scripts/install.sh
 Править от root: `sudo nano /srv/secrets/homelab.env`. После установки панели правка идёт в её Сейфе.
 
 Дальше ничего запускать руками не нужно: в течение 5 минут `update.sh` поднимет стек `platform` (`ops-bot`,
-`llm-gateway`, `dozzle`) и пришлёт «… установлен». Сервисы стека `apps` ставятся так же, кроме тех, у которых на
+`llm-gateway`, `dozzle`, `panel`) и пришлёт «… установлен». Вход в панель — `/panel` в служебном боте,
+подробно в [panel.md](panel.md). Сервисы стека `apps` ставятся так же, кроме тех, у которых на
 сервере есть старая служба systemd с тем же именем: их переносит [migration.md](migration.md), чтобы не запустить
 второй экземпляр с пустой базой.
 
-Бота для `OPS_BOT_TOKEN` лучше создать нового в @BotFather. Бота лучше создать нового в @BotFather: неделю
+Бота для `OPS_BOT_TOKEN` лучше создать нового в @BotFather: неделю
 `ops-bot` работает рядом с `simply-monitoring`, а два процесса с одним токеном мешают друг другу принимать команды.
 Chat id — твой Telegram ID, его показывает, например, @userinfobot. Новому боту сначала написать `/start`:
 без этого Telegram не даст ему писать первым. Проверка, что токен и chat id верные:

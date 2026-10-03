@@ -1,0 +1,55 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Лаборатория Профессора</h1>
+    <p>Базы сервисов и окно SQL. По умолчанию только чтение: Профессор не любит, когда трогают его колбы.</p>
+  </div>
+</header>
+{{if not $v.DBs}}
+<div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Баз в /srv/*/data пока нет.</span></div>
+{{else}}
+<div class="vault">
+  <nav class="card files" aria-label="Базы">
+    {{range $v.DBs}}
+    <a href="/lab?db={{.ID}}" {{if eq .ID $v.Current}}class="on" aria-current="page"{{end}}><span>{{.ID}}</span><span>{{.Size}}</span></a>
+    {{end}}
+    {{if $v.Tables}}
+    <h3 class="small muted" style="margin-top: 8px">Таблицы</h3>
+    <div class="tables">
+      {{range $v.Tables}}<a href="#" data-table="{{.Name}}" title="{{.Schema}}"><span>{{.Name}}</span><span class="muted">{{.Rows}}</span></a>{{end}}
+    </div>
+    {{end}}
+  </nav>
+
+  <section class="card keys {{if $v.Write}}write-on{{end}}">
+    <div class="row between">
+      <h2 class="mono">{{$v.Current}}</h2>
+      {{if $v.Write}}
+      <form method="post" action="/lab/write" class="row">
+        <input type="hidden" name="db" value="{{$v.Current}}"><input type="hidden" name="on" value="0">
+        <span class="badge warn">режим записи до {{clock $v.Until}} · копия {{$v.Backup}}</span>
+        <button class="btn small" type="submit">Выключить</button>
+      </form>
+      {{else}}
+      <form method="post" action="/lab/write" data-confirm="Сначала сделаю копию базы. Потом {{$v.WriteMins}} минут можно выполнять INSERT, UPDATE и DELETE. Бот работает с той же базой — держи запросы короткими." data-confirm-title="Хорошие новости, все! Можно всё сломать">
+        <input type="hidden" name="db" value="{{$v.Current}}"><input type="hidden" name="on" value="1">
+        <button class="btn small orange" type="submit">Режим записи</button>
+      </form>
+      {{end}}
+    </div>
+    {{if $v.Error}}<div class="note bad">{{$v.Error}}</div>{{end}}
+    <form method="post" action="/lab/csv" class="stack" data-sql>
+      <input type="hidden" name="db" value="{{$v.Current}}">
+      <label class="sr" for="sql">Запрос SQL</label>
+      <textarea id="sql" name="sql" spellcheck="false">{{$v.SQL}}</textarea>
+      <div class="row">
+        <button class="btn green" type="submit" data-run>Выполнить</button>
+        <button class="btn" type="submit">Скачать CSV</button>
+        <span class="muted small">Ctrl+Enter — выполнить. Один оператор, до {{$v.MaxRows}} строк, 10 секунд.</span>
+      </div>
+    </form>
+    <div data-result></div>
+  </section>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,50 @@
+# Настройки панели «Планета Экспресс». Панель перечитывает файл на каждый запрос: правка в git
+# подхватывается после git pull без перезапуска.
+
+# Подписи сервисов на экране «Экипаж».
+roles:
+  llm-gateway: учёт и лимиты LLM
+  ops-bot: алерты и команды в Telegram
+  dozzle: логи в браузере
+  panel: эта панель
+  budget-bot: бюджет
+  wellbeing-bot: самочувствие
+  nutrition-assistant: питание
+  jellyfin: кино и сериалы
+  jellyseerr: заявки на кино
+  sonarr: сериалы
+  radarr: фильмы
+  prowlarr: индексаторы
+  qbittorrent: торренты
+  bazarr: субтитры
+  flaresolverr: обход капчи для индексаторов
+  notifiarr: уведомления медиастека
+  watchtower: обновления медиастека
+
+# Ссылки «Развлечений» на Мостике. Адрес хоста берётся из адреса страницы панели,
+# состояние — по контейнеру container.
+fun:
+  - title: Jellyfin
+    hint: кино и сериалы
+    port: 8096
+    container: jellyfin
+  - title: Jellyseerr
+    hint: заказать кино
+    port: 5055
+    container: jellyseerr
+  - title: Sonarr
+    hint: сериалы
+    port: 8989
+    container: sonarr
+  - title: Radarr
+    hint: фильмы
+    port: 7878
+    container: radarr
+  - title: qBittorrent
+    hint: торренты
+    port: 8080
+    container: qbittorrent
+  - title: Dozzle
+    hint: логи в браузере
+    port: 8889
+    container: dozzle

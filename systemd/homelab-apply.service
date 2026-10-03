@@ -1,0 +1,14 @@
+# Запускается по файлу-триггеру от панели: сохранён секрет, откат версии, «Обновить сейчас».
+# Политика auto, а не all: медиастек днём не обновляется. Файл удаляется до запуска,
+# иначе homelab-apply.path сработает снова.
+[Unit]
+Description=homelab: применить изменения из панели
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/rm -f /srv/panel/trigger/apply
+# Если идёт плановый прогон — дождаться его, а не потерять нажатие.
+Environment=UPDATE_LOCK_WAIT=900
+ExecStart=/opt/homelab/scripts/update.sh auto

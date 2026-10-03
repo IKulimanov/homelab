@@ -245,6 +245,105 @@ func Demux(r io.Reader) ([]byte, error) {
 	}
 }
 
+// LogStream — логи потоком: последние tail строк, затем новые, пока follow и ctx не отменён.
+// У контейнера без TTY кадры уже разобраны: читается чистый текст.
+func (c *Client) LogStream(ctx context.Context, id string, tail int, follow, tty bool) (io.ReadCloser, error) {
+	q := url.Values{"stdout": {"1"}, "stderr": {"1"}, "tail": {strconv.Itoa(tail)}}
+	if follow {
+		q.Set("follow", "1")
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/logs", q)
+	if err != nil {
+		return nil, err
+	}
+	if tty {
+		return resp.Body, nil
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{NewDemuxReader(resp.Body), resp.Body}, nil
+}
+
+// demuxReader — потоковый вариант Demux: отдаёт тела кадров по мере чтения, не дожидаясь конца.
+type demuxReader struct {
+	r    io.Reader
+	left uint32 // сколько байт текущего кадра ещё не отдано
+	hdr  [8]byte
+}
+
+func NewDemuxReader(r io.Reader) io.Reader { return &demuxReader{r: r} }
+
+func (d *demuxReader) Read(p []byte) (int, error) {
+	for d.left == 0 {
+		if _, err := io.ReadFull(d.r, d.hdr[:]); err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				return 0, fmt.Errorf("логи: обрыв заголовка кадра: %w", err)
+			}
+			return 0, err
+		}
+		d.left = binary.BigEndian.Uint32(d.hdr[4:])
+	}
+	if uint32(len(p)) > d.left {
+		p = p[:d.left]
+	}
+	n, err := d.r.Read(p)
+	d.left -= uint32(n)
+	if errors.Is(err, io.EOF) && d.left > 0 {
+		return n, fmt.Errorf("логи: обрыв кадра: %w", io.ErrUnexpectedEOF)
+	}
+	if errors.Is(err, io.EOF) {
+		// Кадр дочитан; конец потока вернётся следующим вызовом, на заголовке.
+		err = nil
+	}
+	return n, err
+}
+
+// Stats — загрузка контейнера сейчас.
+type Stats struct {
+	CPUPercent float64 // 100 = одно ядро целиком
+	MemBytes   uint64  // без файлового кэша, как в docker stats
+}
+
+// Stats — один замер. Docker сам ждёт второй отсчёт, поэтому вызов длится около секунды:
+// по многим контейнерам его надо делать параллельно.
+func (c *Client) Stats(ctx context.Context, id string) (Stats, error) {
+	var raw struct {
+		CPU    cpuStats `json:"cpu_stats"`
+		PreCPU cpuStats `json:"precpu_stats"`
+		Memory struct {
+			Usage uint64            `json:"usage"`
+			Stats map[string]uint64 `json:"stats"`
+		} `json:"memory_stats"`
+	}
+	if err := c.getJSON(ctx, "/containers/"+url.PathEscape(id)+"/stats", url.Values{"stream": {"false"}}, &raw); err != nil {
+		return Stats{}, err
+	}
+	var st Stats
+	cpuDelta := float64(raw.CPU.Usage.Total) - float64(raw.PreCPU.Usage.Total)
+	sysDelta := float64(raw.CPU.System) - float64(raw.PreCPU.System)
+	if cpuDelta > 0 && sysDelta > 0 {
+		cpus := float64(max(raw.CPU.Online, 1))
+		st.CPUPercent = cpuDelta / sysDelta * cpus * 100
+	}
+	cache := raw.Memory.Stats["inactive_file"] // cgroup v2
+	if cache == 0 {
+		cache = raw.Memory.Stats["total_inactive_file"] // cgroup v1
+	}
+	if raw.Memory.Usage > cache {
+		st.MemBytes = raw.Memory.Usage - cache
+	}
+	return st, nil
+}
+
+type cpuStats struct {
+	Usage struct {
+		Total uint64 `json:"total_usage"`
+	} `json:"cpu_usage"`
+	System uint64 `json:"system_cpu_usage"`
+	Online uint32 `json:"online_cpus"`
+}
+
 // Events — поток событий контейнеров до отмены ctx или обрыва соединения. Канал закрывается в конце,
 // причина — в errc.
 func (c *Client) Events(ctx context.Context) (<-chan Event, <-chan error) {
