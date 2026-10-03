@@ -275,27 +275,6 @@ services:
     memswap_limit: 500m
     restart: unless-stopped
 
-  # Watchtower — автообновление образов с уведомлением в Telegram
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: watchtower
-    mem_limit: 500m
-    memswap_limit: 500m
-    environment:
-      - TZ=${TZ}
-      - DOCKER_API_VERSION=1.44
-      - WATCHTOWER_CLEANUP=true              # удалять старые образы после обновления
-      - WATCHTOWER_INCLUDE_STOPPED=false     # не трогать остановленные контейнеры
-      - WATCHTOWER_SCHEDULE=0 0 4 * * *     # проверка обновлений в 4:00 ночи
-      - WATCHTOWER_NOTIFICATIONS=shoutrrr
-      # Telegram уведомления о обновлениях контейнеров
-      # Формат: telegram://BOT_TOKEN@telegram?channels=CHAT_ID
-      - WATCHTOWER_NOTIFICATION_URL=telegram://${TELEGRAM_BOT_TOKEN}@telegram?channels=${TELEGRAM_CHAT_ID}
-#      - WATCHTOWER_NOTIFICATION_TEMPLATE=💧 Watchtower обновил контейнеры на {{ .Host }}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-
 # ╔══════════════════════════════════════════════════════════╗
 # ║  СЕТЬ                                                    ║
 # ╚══════════════════════════════════════════════════════════╝
