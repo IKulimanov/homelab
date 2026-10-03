@@ -148,8 +148,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 1. Переменные медиастека — как есть, без правок:
 
    ```bash
-   install -d -m 0755 /srv/media
-   install -m 0600 <MEDIA_DIR>/.env /srv/secrets/media.env
+   install -m 0600 -o 65532 -g 65532 <MEDIA_DIR>/.env /srv/secrets/media.env
    ```
 
 2. Файл compose в homelab сверен с тем, что запущено. Если клон на сервере правили руками, его файл может отличаться
