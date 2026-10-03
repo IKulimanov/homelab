@@ -62,7 +62,7 @@ mkdir -p /mnt/backup/legacy
 
    ```bash
    cd /opt/homelab && docker compose -f stacks/platform/compose.yaml --env-file .env up -d
-   docker logs ops-bot          # «ops-bot запущен», в Telegram пришло «ops-bot запущен, версия sha-…»
+   docker logs ops-bot          # «ops-bot запущен»; в чат бот при запуске не пишет
    docker logs llm-gateway      # «шлюз запущен»
    docker inspect -f '{{.State.Health.Status}}' llm-gateway    # healthy через полминуты
    ```
@@ -325,6 +325,9 @@ docker logs -f wellbeing-bot
 
 Откат одного бота: в `/srv/<svc>/.env` вернуть настоящий ключ, `GEMINI_BASE_URL` очистить, затем
 `scripts/update.sh auto`.
+
+Ключ для самого `ops-bot` — так же, `install.sh llm-key ops-bot`. С ним Бендер комментирует недельный отчёт через
+Gemini, без него ставит готовую фразу ([monitoring.md](monitoring.md)).
 
 ## Шаг 7. simply-monitoring
 

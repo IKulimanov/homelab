@@ -7,7 +7,7 @@
 
 | Сервис | Стек | Что делает | Зависит от | Данные |
 |---|---|---|---|---|
-| `ops-bot` | platform | алерты, отчёт за день, команды в Telegram, [подробно](docs/monitoring.md) | Docker, датчики хоста | `/srv/ops-bot/data` |
+| `ops-bot` | platform | Бендер: алерты о важном, недельный отчёт, команды в Telegram, [подробно](docs/monitoring.md) | Docker, датчики хоста | `/srv/ops-bot/data` |
 | `llm-gateway` | platform | учёт токенов, лимиты и баланс Gemini, [подробно](docs/llm.md) | Gemini API | `/srv/llm-gateway/data` |
 | `budget-bot` | apps | учёт общих трат | Gemini через шлюз, SQLite | `/srv/budget-bot/data` |
 | `wellbeing-bot` | apps | дневник самочувствия | Gemini через шлюз, SQLite | `/srv/wellbeing-bot/data` |
@@ -30,6 +30,7 @@
 | копия базы сейчас | | `sudo /opt/homelab/scripts/backup.sh <сервис> manual` |
 | расход LLM, баланс | `/usage`, `/balance` | |
 | записать пополнение Gemini | `/topup 10` | |
+| GIF для событий | `/gif` | |
 
 ## Как приезжают обновления
 
