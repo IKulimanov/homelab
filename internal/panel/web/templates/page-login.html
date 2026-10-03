@@ -1,0 +1,27 @@
+{{define "content"}}{{$v := .Data}}
+<div class="login">
+  <div class="card">
+    {{template "ship" $v}}
+    {{if eq $v.Variant "confirm"}}
+      <h1>Курьер прибыл</h1>
+      <p class="muted">Пропуск настоящий. Нажми кнопку, и штаб откроется на этом устройстве на 30 дней.</p>
+      <form method="post" action="/login">
+        <input type="hidden" name="t" value="{{$v.Token}}">
+        <button class="btn green" type="submit">Войти в штаб</button>
+      </form>
+      <p class="muted small">Пропуск одноразовый, сгорит в {{clock $v.Expires}}.</p>
+    {{else if eq $v.Variant "expired"}}
+      <h1>Пропуск протух</h1>
+      <p class="muted">Этой ссылкой уже вошли, или прошло больше 5 минут. Попроси новую: напиши боту <code>/panel</code>.</p>
+    {{else if eq $v.Variant "notfound"}}
+      <h1>Бендер украл эту страницу</h1>
+      <p class="muted">Здесь ничего нет. Возможно, и не было.</p>
+      <a class="btn" href="/">На мостик</a>
+    {{else}}
+      <h1>Ждём курьера</h1>
+      <p class="muted">Вход в штаб — по одноразовой ссылке. Напиши служебному боту в Telegram <code>/panel</code> и открой ссылку на этом устройстве.</p>
+      <p class="muted small">Бот молчит? На сервере: <code>docker exec panel /app -login-link</code></p>
+    {{end}}
+  </div>
+</div>
+{{end}}

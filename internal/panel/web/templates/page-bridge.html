@@ -1,0 +1,104 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Мостик</h1>
+    <p>Сервер под столом · обновлено {{clock now}}</p>
+  </div>
+  {{if eq $v.Ship "flying"}}<span class="badge warn">доставка в пути</span>{{else if $v.Problems}}<span class="badge bad">есть проблемы: {{len $v.Problems}}</span>{{else}}<span class="badge ok">всё летит</span>{{end}}
+  <form method="post" action="/update"><input type="hidden" name="back" value="/"><button class="btn orange" type="submit">Обновить сейчас</button></form>
+</header>
+
+<section class="grid" style="--min: 420px">
+  <div class="card">
+    <div class="row between"><h2>Корабль</h2><span class="muted small">нажми на него — Бендер что-нибудь скажет</span></div>
+    <div class="bubble pop" data-bubble aria-live="polite">{{$v.Phrase}}</div>
+    <button type="button" class="ship-box" data-poke {{if eq $v.Ship "smoke"}}data-bad{{end}} aria-label="Корабль: сказать фразу">{{template "ship" $v}}</button>
+  </div>
+
+  <div class="card">
+    <h2>Приборная панель</h2>
+    {{if $v.NoMetrics}}
+      <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Замеров пока нет: ops-bot собирает их раз в минуту. Загляни через пару минут.</span></div>
+    {{else}}
+      <div class="gauges">
+        {{range $v.Gauges}}
+        <div class="inner gauge">
+          <span class="muted small">{{.Title}}</span>
+          <strong class="c-{{.Level}}">{{.Value}}</strong>
+          <div class="bar"><i class="{{.Level}}" style="width: {{pct .Pct}}%"></i></div>
+          <span class="muted small">{{.Note}}</span>
+        </div>
+        {{end}}
+      </div>
+      {{if $v.Tanks}}
+      <h3 style="font-size: 15px">Баки с топливом — диски</h3>
+      <div class="stack">
+        {{range $v.Tanks}}
+        <div class="tank"><span class="mono">{{.Title}}</span><div class="bar big"><i class="{{.Level}}" style="width: {{pct .Pct}}%"></i></div><span class="c-{{.Level}}">{{.Value}}</span></div>
+        {{end}}
+      </div>
+      {{end}}
+    {{end}}
+  </div>
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h2>Что горит</h2>
+    {{range $v.Problems}}
+    <div class="inner problem">
+      <span class="badge {{.Level}}">{{if eq .Level "bad"}}горит{{else}}дымит{{end}}</span>
+      <span><b>{{if .Link}}<a href="{{.Link}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</b><span class="muted small">{{.Text}}</span></span>
+    </div>
+    {{else}}
+    <div class="inner muted">Тишина в эфире. Хорошие новости, все: ничего не горит.</div>
+    {{end}}
+  </div>
+
+  <div class="card">
+    <div class="row between"><h2>Последние доставки</h2><a href="/deliveries" class="small">все доставки</a></div>
+    {{range $v.Deliveries}}
+    <div class="inner dlv">
+      <span class="muted">{{clock .Time}}</span>
+      <span><b>{{.Svc}}</b><span class="mono small muted">{{if .From}}{{.From}} → {{end}}{{.To}}</span></span>
+      <span class="{{if eq .Result "ok"}}c-ok{{else}}c-bad{{end}}"><b>{{if eq .Result "ok"}}доставлено{{else}}не вышло{{end}}</b></span>
+    </div>
+    {{else}}
+    <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Доставок ещё не было.</span></div>
+    {{end}}
+  </div>
+</section>
+
+{{if not $v.NoMetrics}}
+<section class="card">
+  <div class="row between">
+    <h2>Графики</h2>
+    <div class="chips">{{range $v.Ranges}}<a href="/?range={{.}}" {{if eq . $v.Range}}class="on"{{end}}>{{if eq . 1}}сутки{{else}}{{.}} дней{{end}}</a>{{end}}</div>
+  </div>
+  <div class="grid" style="--min: 260px">
+    {{range $v.Charts}}
+    <div class="inner chart">
+      <div class="row between"><b>{{.Title}}</b>{{if not .Empty}}<span class="mono small">{{.Last}}{{.Unit}}</span>{{end}}</div>
+      {{if .Empty}}<p class="muted small">нет данных за этот срок</p>{{else}}
+      <svg viewBox="0 0 300 80" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{.Points}}"/></svg>
+      <span class="muted small">мин {{.Min}} · макс {{.Max}}</span>{{end}}
+    </div>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{if $v.Fun}}
+<section class="card">
+  <div class="row between"><h2>Развлечения</h2><span class="muted small">кино, сериалы, торренты</span></div>
+  <div class="grid" style="--min: 170px">
+    {{range $v.Fun}}
+    <a class="inner fun" href="{{.URL}}" target="_blank" rel="noopener noreferrer">
+      <b><span class="dot {{.State}}"></span>{{.Title}}</b>
+      <span class="muted small">{{.Hint}}</span>
+    </a>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}

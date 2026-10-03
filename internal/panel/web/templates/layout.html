@@ -1,0 +1,60 @@
+{{define "layout"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>{{.Title}} · Планета Экспресс</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700&family=Unbounded:wght@500;700;900&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="/static/panel.css">
+<link rel="icon" href="/static/ship.svg" type="image/svg+xml">
+<script src="/static/panel.js" defer></script>
+</head>
+<body class="pe-space">
+{{if .Active}}
+<div class="shell">
+  <nav class="nav" aria-label="Разделы штаба">
+    <a class="brand" href="/"><b>ПЛАНЕТА<br>ЭКСПРЕСС</b><span>штаб homelab · доставляем с 3000 года</span></a>
+    <div class="nav-items">
+      <a href="/" {{if eq .Active "bridge"}}class="on" aria-current="page"{{end}}><b>Мостик</b><span>обзор и приборы</span></a>
+      <a href="/crew" {{if eq .Active "crew"}}class="on" aria-current="page"{{end}}><b>Экипаж</b><span>сервисы и кнопки</span></a>
+      <a href="/logs" {{if eq .Active "logs"}}class="on" aria-current="page"{{end}}><b>Бортовой журнал</b><span>логи в реальном времени</span></a>
+      <a href="/vault" {{if eq .Active "vault"}}class="on" aria-current="page"{{end}}><b>Сейф Гермеса</b><span>секреты</span></a>
+      <a href="/lab" {{if eq .Active "lab"}}class="on" aria-current="page"{{end}}><b>Лаборатория</b><span>базы и SQL</span></a>
+      <a href="/accounting" {{if eq .Active "accounting"}}class="on" aria-current="page"{{end}}><b>Бухгалтерия</b><span>LLM: расход и баланс</span></a>
+      <a href="/deliveries" {{if eq .Active "deliveries"}}class="on" aria-current="page"{{end}}><b>Доставки</b><span>обновления и морозильник</span></a>
+    </div>
+    <div class="nav-foot">
+      {{if not .Expires.IsZero}}<span class="who">вход через Telegram · до {{date .Expires}}</span>{{end}}
+      <form method="post" action="/logout"><button type="submit">Выйти из штаба</button></form>
+    </div>
+  </nav>
+  <main class="main">
+    {{template "content" .}}
+  </main>
+</div>
+{{else}}
+{{template "content" .}}
+{{end}}
+<div class="toast" role="status" aria-live="polite" {{if not .Toast}}hidden{{end}}>{{.Toast}}</div>
+<dialog id="confirm">
+  <form method="dialog">
+    <h3 data-title>Точно?</h3>
+    <p data-text></p>
+    <div class="row">
+      <button class="btn orange" value="ok" data-ok>Да</button>
+      <button class="btn" value="cancel">Отмена</button>
+    </div>
+  </form>
+</dialog>
+<div class="toad" hidden>
+  <div class="rings"></div>
+  <div>
+    <b>ВСЕ СЛАВЬТЕ ГИПНОЖАБУ</b>
+    <span class="muted">Теперь ты принадлежишь Гипножабе.</span>
+    <button type="button" class="btn green" data-wake>Очнуться</button>
+  </div>
+</div>
+</body>
+</html>{{end}}

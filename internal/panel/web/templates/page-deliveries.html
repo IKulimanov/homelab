@@ -1,0 +1,78 @@
+{{define "content"}}{{$v := .Data}}
+<header class="head">
+  <div>
+    <h1>Доставки</h1>
+    <p>Что, когда и с какой версии на какую привёз update.sh. Каждые 5 минут, медиастек — ночью.</p>
+  </div>
+  <form method="post" action="/update"><input type="hidden" name="back" value="/deliveries"><button class="btn orange" type="submit" {{if $v.Running}}disabled{{end}}>Обновить сейчас</button></form>
+</header>
+
+<section class="card">
+  <div class="row">
+    <div style="flex: 0 1 260px">{{template "ship" $v}}</div>
+    <div class="stack" style="flex: 1 1 260px">
+      {{if $v.Running}}
+      <b data-poll-run>Корабль в пути: update.sh работает. Страница обновится сама.</b>
+      {{else if $v.LastRun.Finished}}
+      <b>Корабль на базе.</b>
+      <span class="muted">Последний рейс начался в {{clock $v.LastRun.StartedAt}}{{if $v.LastRun.Failed}}, код выхода {{$v.LastRun.ExitCode}}{{end}}.</span>
+      {{else}}
+      <b>Корабль ещё не летал.</b>
+      {{end}}
+    </div>
+  </div>
+  {{range $v.Pins}}
+  <form method="post" action="/deliveries/unpin" class="note warn row between">
+    <span><b>{{.Svc}}</b> закреплён на <code>{{.Tag}}</code> и не получает новых версий.</span>
+    <input type="hidden" name="svc" value="{{.Svc}}">
+    <button class="btn small" type="submit">Вернуть на main</button>
+  </form>
+  {{end}}
+</section>
+
+<section class="card">
+  <h2>Журнал доставок</h2>
+  {{if $v.Rows}}
+  <div class="scroll">
+    <table class="tbl">
+      <thead><tr><th>Когда</th><th>Сервис</th><th>Версии</th><th>Итог</th><th></th></tr></thead>
+      <tbody>
+      {{range $v.Rows}}
+      <tr>
+        <td>{{date .Time}} {{clock .Time}}</td>
+        <td>{{.Svc}}<br><span class="muted">{{.Stack}}</span></td>
+        <td>{{if .From}}{{.From}} → {{end}}{{.To}}</td>
+        <td><span class="badge {{if eq .Result "ok"}}ok{{else}}bad{{end}}">{{if eq .Reason "install"}}установка{{else if eq .Reason "config"}}конфиг{{else if eq .Reason "image"}}образ{{else}}{{.Reason}}{{end}}</span><br><span class="muted">{{.Text}}</span></td>
+        <td>{{if .CanRollback}}
+          <form method="post" action="/deliveries/rollback" data-confirm="{{.Svc}} вернётся на {{.From}} и останется на ней, пока не нажмёшь «Вернуть на main»." data-confirm-title="Назад в прошлое?">
+            <input type="hidden" name="svc" value="{{.Svc}}"><input type="hidden" name="to" value="{{.From}}">
+            <button class="btn small" type="submit">Откатить на {{.From}}</button>
+          </form>{{end}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty"><b>Почему бы и не Зойдберг?</b><span class="muted">Доставок ещё не было.</span></div>
+  {{end}}
+</section>
+
+<section class="card" id="freezer">
+  <div class="row between">
+    <h2>Морозильник</h2>
+    <form method="post" action="/deliveries/freeze"><button class="btn" type="submit" {{if $v.Freezing}}disabled{{end}}>{{if $v.Freezing}}Морозим…{{else}}Заморозить сейчас{{end}}</button></form>
+  </div>
+  <p class="muted small" style="margin: 0">Копии баз делаются каждую ночь в 3:30 и хранятся 30 дней. Фрай пролежал в заморозке тысячу лет — базам хватит месяца.</p>
+  {{if $v.Backups}}
+  <div class="scroll">
+    <table class="tbl frost-table">
+      <thead><tr><th>Сервис</th><th>Файл</th><th>Размер</th><th>Когда</th></tr></thead>
+      <tbody>{{range $v.Backups}}<tr><td>{{.Svc}}</td><td>{{.File}}</td><td>{{size .Size}}</td><td>{{date .Time}} {{clock .Time}}</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty"><b class="frost">Почему бы и не Зойдберг?</b><span class="muted">Копий пока нет. Первая появится ночью или по кнопке.</span></div>
+  {{end}}
+</section>
+{{end}}
