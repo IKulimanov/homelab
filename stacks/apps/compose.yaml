@@ -1,5 +1,6 @@
 # Свои боты. Образы собирает GitHub Actions при push в main, обновляет scripts/update.sh.
-# Секреты — в /srv/<svc>/.env, база — в /srv/<svc>/data.
+# Секреты — в /srv/secrets/<svc>.env (правятся в панели), база — в /srv/<svc>/data.
+# Новый сервис достаточно описать здесь: update.sh сам создаст каталоги и секреты из env/<svc>.env.example.
 name: apps
 
 x-app: &app
@@ -17,7 +18,11 @@ services:
     <<: *app
     image: ghcr.io/ikulimanov/budget-bot:${BUDGET_BOT_TAG:-main}
     container_name: budget-bot
-    env_file: /srv/budget-bot/.env
+    # required: false: без файла не падает compose config всего стека. Новый сервис update.sh не запустит,
+    # пока в файле не заполнены обязательные ключи.
+    env_file:
+      - path: /srv/secrets/budget-bot.env
+        required: false
     environment:
       BOT_DB: /data/budget.db
     volumes:
@@ -27,7 +32,9 @@ services:
     <<: *app
     image: ghcr.io/ikulimanov/wellbeing-bot:${WELLBEING_BOT_TAG:-main}
     container_name: wellbeing-bot
-    env_file: /srv/wellbeing-bot/.env
+    env_file:
+      - path: /srv/secrets/wellbeing-bot.env
+        required: false
     environment:
       BOT_DB: /data/wellbeing.db
     volumes:
@@ -37,7 +44,9 @@ services:
     <<: *app
     image: ghcr.io/ikulimanov/nutrition-assistant:${NUTRITION_ASSISTANT_TAG:-main}
     container_name: nutrition-assistant
-    env_file: /srv/nutrition-assistant/.env
+    env_file:
+      - path: /srv/secrets/nutrition-assistant.env
+        required: false
     command: ["-config", "/etc/nutrition-assistant/config.yaml"]
     volumes:
       - /srv/nutrition-assistant/data:/data

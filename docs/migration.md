@@ -29,11 +29,15 @@ archive() {  # archive <имя> <путь>...
 Порядок: платформа (служебный бот и шлюз) → `budget-bot` → медиастек → `wellbeing-bot` → `nutrition-assistant` →
 боты на шлюз → `simply-monitoring` → уборка.
 
+Боты со старой службой systemd (`budget-bot.service` и другие) автоустановка не трогает, пока служба включена или
+работает: иначе рядом со старым ботом поднялся бы второй с пустой базой и тем же токеном. Поэтому боты переносятся
+руками по шагам ниже; после `systemctl disable` контейнер уже запущен, и дальше его обновляет `update.sh`.
+
 ## Шаг 0. Подготовка и опись
 
 Установка homelab: [server-setup.md](server-setup.md). После неё на сервере есть `/opt/homelab`, сеть Docker
 `homelab` и таймеры обновления и бэкапа. Старым службам они не мешают: в `stacks/apps` пока нет ни одного
-запущенного контейнера, а медиастек без `/srv/media/.env` обновление пропускает.
+запущенного контейнера, а медиастек без `/srv/secrets/media.env` обновление пропускает.
 
 Опись:
 
@@ -53,15 +57,16 @@ mkdir -p /mnt/backup/legacy
 
 Образы `ops-bot` и `llm-gateway` собирает Actions в репозитории `homelab` после push в `main`.
 
-1. Настройки. `install.sh` уже создал `/opt/homelab/.env` с `DOCKER_GID` и `LLM_ADMIN_TOKEN`. Вписать туда
+1. Настройки. `install.sh` уже создал `/srv/secrets/homelab.env` с `DOCKER_GID` и `LLM_ADMIN_TOKEN`. Вписать туда
    `OPS_BOT_TOKEN`, `OPS_CHAT_ID` (см. server-setup, шаг 4), по желанию `HEALTHCHECK_URL`
-   ([monitoring.md](monitoring.md)). В `/srv/llm-gateway/.env` вписать `GEMINI_API_KEY` — настоящий ключ из
+   ([monitoring.md](monitoring.md)). В `/srv/secrets/llm-gateway.env` вписать `GEMINI_API_KEY` — настоящий ключ из
    AI Studio. Без него шлюз не запустится.
 
-2. Запуск. Медиастек и старые боты это не затрагивает:
+2. Запуск. Руками не нужен: в течение 5 минут после заполнения ключей `update.sh` сам поднимет `ops-bot`,
+   `llm-gateway` и `dozzle` и пришлёт «… установлен». Медиастек и старые боты это не затрагивает. Не ждать:
 
    ```bash
-   cd /opt/homelab && docker compose -f stacks/platform/compose.yaml --env-file .env up -d
+   sudo systemctl start homelab-update-now
    docker logs ops-bot          # «ops-bot запущен»; в чат бот при запуске не пишет
    docker logs llm-gateway      # «шлюз запущен»
    docker inspect -f '{{.State.Health.Status}}' llm-gateway    # healthy через полминуты
@@ -87,11 +92,11 @@ mkdir -p /mnt/backup/legacy
 ```
 
 Перенос настроек: значения `BOT_TOKEN`, `BOT_TIMEZONE`, `BOT_REMINDER_TIME`, `GEMINI_API_KEY`, `GEMINI_MODEL`
-из `/etc/budget-bot.env` вписать в `/srv/budget-bot/.env`. `BOT_DB` не переносится, путь к базе задаёт compose.
+из `/etc/budget-bot.env` вписать в `/srv/secrets/budget-bot.env`. `BOT_DB` не переносится, путь к базе задаёт compose.
 `GEMINI_BASE_URL` пока пустой.
 
 ```bash
-diff <(grep -v '^#' /etc/budget-bot.env | grep . | sort) <(grep -v '^#' /srv/budget-bot/.env | grep . | sort)
+diff <(grep -v '^#' /etc/budget-bot.env | grep . | sort) <(grep -v '^#' /srv/secrets/budget-bot.env | grep . | sort)
 ```
 
 В выводе должна остаться только строка `BOT_DB` и пустая `GEMINI_BASE_URL=`.
@@ -109,7 +114,7 @@ systemctl stop budget-bot
 /opt/budget-bot/backup.sh /opt/budget-bot/budget.db /mnt/backup/legacy/budget-bot 365
 install -m 0600 -o 65532 -g 65532 /opt/budget-bot/budget.db /srv/budget-bot/data/budget.db
 ls /opt/budget-bot/          # файлов budget.db-wal и budget.db-shm быть не должно: служба остановлена штатно
-cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file .env up -d budget-bot
+cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file /srv/secrets/homelab.env up -d budget-bot
 docker logs -f budget-bot    # строка «бот запущен» с version=sha-…
 ```
 
@@ -136,7 +141,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 Цель: тот же compose-проект `media-stack` начинает управляться из `/opt/homelab/stacks/media`. Контейнеры не
 пересоздаются и не перезапускаются.
 
-Пока шаг не закончен, не нажимать `/update` и не запускать `homelab-update-now`: с появлением `/srv/media/.env` они
+Пока шаг не закончен, не нажимать `/update` и не запускать `homelab-update-now`: с появлением `/srv/secrets/media.env` они
 обновляют и медиастек, и при несовпадении конфигурации пересоздали бы его контейнеры. Таймер раз в 5 минут
 медиастек не трогает.
 
@@ -144,7 +149,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 
    ```bash
    install -d -m 0755 /srv/media
-   install -m 0600 <MEDIA_DIR>/.env /srv/media/.env
+   install -m 0600 <MEDIA_DIR>/.env /srv/secrets/media.env
    ```
 
 2. Файл compose в homelab сверен с тем, что запущено. Если клон на сервере правили руками, его файл может отличаться
@@ -167,7 +172,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 
    ```bash
    docker inspect jellyfin --format '{{json .Config.Env}}' | tr ',' '\n'
-   docker compose -f /opt/homelab/stacks/media/compose.yaml --env-file /srv/media/.env config jellyfin
+   docker compose -f /opt/homelab/stacks/media/compose.yaml --env-file /srv/secrets/media.env config jellyfin
    ```
 
    Если стоит `image`, значит, кто-то уже скачал новый образ, а контейнер ещё старый. Ничего страшного: пункт 4 его
@@ -178,7 +183,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
 
    ```bash
    docker ps --filter label=com.docker.compose.project=media-stack --format '{{.Names}} {{.CreatedAt}}' > /root/media-before.txt
-   cd /opt/homelab && docker compose -f stacks/media/compose.yaml --env-file /srv/media/.env up -d --no-recreate --pull never
+   cd /opt/homelab && docker compose -f stacks/media/compose.yaml --env-file /srv/secrets/media.env up -d --no-recreate --pull never
    docker ps --filter label=com.docker.compose.project=media-stack --format '{{.Names}} {{.CreatedAt}}' | diff /root/media-before.txt -
    ```
 
@@ -211,7 +216,7 @@ docker stop budget-bot && systemctl enable --now budget-bot
    совпадают.
 
 Если хэши в пункте 3 так и не совпали, медиастек остаётся в старом каталоге, homelab его не трогает: без
-`/srv/media/.env` стек пропускается. Пересоздание контейнеров тогда делается в удобное время, по твоему решению.
+`/srv/secrets/media.env` стек пропускается. Пересоздание контейнеров тогда делается в удобное время, по твоему решению.
 
 ## Шаг 4. wellbeing-bot
 
@@ -222,11 +227,11 @@ docker stop budget-bot && systemctl enable --now budget-bot
 /opt/homelab/scripts/install.sh service wellbeing-bot
 ```
 
-Из `/etc/wellbeing-bot.env` перенести в `/srv/wellbeing-bot/.env` значения `BOT_TOKEN`, `ADMIN_ID`,
+Из `/etc/wellbeing-bot.env` перенести в `/srv/secrets/wellbeing-bot.env` значения `BOT_TOKEN`, `ADMIN_ID`,
 `GEMINI_API_KEY`, `GEMINI_MODEL`, `BOT_TIMEZONE`, `MAX_USERS`. `BOT_DB` не переносится.
 
 ```bash
-diff <(grep -v '^#' /etc/wellbeing-bot.env | grep . | sort) <(grep -v '^#' /srv/wellbeing-bot/.env | grep . | sort)
+diff <(grep -v '^#' /etc/wellbeing-bot.env | grep . | sort) <(grep -v '^#' /srv/secrets/wellbeing-bot.env | grep . | sort)
 docker pull ghcr.io/ikulimanov/wellbeing-bot:main
 ```
 
@@ -237,7 +242,7 @@ systemctl stop wellbeing-bot
 /usr/local/bin/wellbeing-backup.sh /opt/wellbeing-bot/wellbeing.db /mnt/backup/legacy/wellbeing-bot 365
 ls /opt/wellbeing-bot/       # wellbeing.db-wal и -shm быть не должно
 install -m 0600 -o 65532 -g 65532 /opt/wellbeing-bot/wellbeing.db /srv/wellbeing-bot/data/wellbeing.db
-cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file .env up -d wellbeing-bot
+cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file /srv/secrets/homelab.env up -d wellbeing-bot
 docker logs -f wellbeing-bot
 ```
 
@@ -283,7 +288,7 @@ docker logs -f wellbeing-bot
    В конце он пишет, может ли uid 65532 писать в каталог копий. Если не может — вернуться к пункту 1.
 
    Секреты: из `/etc/nutrition-assistant/env` перенести `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, а также
-   `ANTHROPIC_API_KEY` и `OPENAI_API_KEY`, если они там есть, в `/srv/nutrition-assistant/.env`.
+   `ANTHROPIC_API_KEY` и `OPENAI_API_KEY`, если они там есть, в `/srv/secrets/nutrition-assistant.env`.
 
    ```bash
    diff /etc/nutrition-assistant/config.yaml /srv/nutrition-assistant/config.yaml   # только два пути
@@ -297,7 +302,7 @@ docker logs -f wellbeing-bot
    sqlite3 /var/lib/nutrition-assistant/nutrition.db ".backup '/mnt/backup/legacy/nutrition-$(date +%F).db'"
    ls /var/lib/nutrition-assistant/     # nutrition.db-wal и -shm быть не должно
    install -m 0600 -o 65532 -g 65532 /var/lib/nutrition-assistant/nutrition.db /srv/nutrition-assistant/data/nutrition.db
-   cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file .env up -d nutrition-assistant
+   cd /opt/homelab && docker compose -f stacks/apps/compose.yaml --env-file /srv/secrets/homelab.env up -d nutrition-assistant
    docker logs -f nutrition-assistant
    ```
 
@@ -316,14 +321,14 @@ docker logs -f wellbeing-bot
 /opt/homelab/scripts/update.sh auto      # пересоздаёт llm-gateway и бота с новыми ключами
 ```
 
-Скрипт записывает `LLM_KEY_BUDGET_BOT` в `/srv/llm-gateway/.env`, а в `/srv/budget-bot/.env` —
+Скрипт записывает `LLM_KEY_BUDGET_BOT` в `/srv/secrets/llm-gateway.env`, а в `/srv/secrets/budget-bot.env` —
 `GEMINI_API_KEY` с тем же значением и `GEMINI_BASE_URL=http://llm-gateway:8080`. У `nutrition-assistant` адрес
 записывается в `config.yaml`, `gemini.base_url`.
 
 Проверка: вызвать в боте то, что ходит в Gemini (у `budget-bot` — отчёт за месяц), затем `/usage` в служебном
 боте показывает вызов и стоимость. Подробно — [llm.md](llm.md).
 
-Откат одного бота: в `/srv/<svc>/.env` вернуть настоящий ключ, `GEMINI_BASE_URL` очистить, затем
+Откат одного бота: в `/srv/secrets/<svc>.env` вернуть настоящий ключ, `GEMINI_BASE_URL` очистить, затем
 `scripts/update.sh auto`.
 
 Ключ для самого `ops-bot` — так же, `install.sh llm-key ops-bot`. С ним Бендер комментирует недельный отчёт через

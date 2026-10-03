@@ -6,11 +6,11 @@
 ## 1. Пакеты
 
 ```bash
-sudo apt install -y git sqlite3 jq curl
+sudo apt install -y git sqlite3 jq curl age
 docker compose version
 ```
 
-`sqlite3` нужен для копий баз, `jq` — для `update.sh` и `diff.sh`.
+`sqlite3` нужен для копий баз, `jq` — для `update.sh` и `diff.sh`, `age` — для зашифрованной копии секретов.
 
 ## 2. Доступ к GitHub
 
@@ -53,10 +53,13 @@ sudo /opt/homelab/scripts/install.sh
 ```
 
 `install.sh` проверяет программы и делает следующее:
-- создаёт `/opt/homelab/.env` из образца и вписывает в него `DOCKER_GID` (группа docker, через неё `ops-bot`
-  читает `docker.sock`) и `LLM_ADMIN_TOKEN` (общий секрет `ops-bot` и `llm-gateway`, вводить его не нужно);
+- создаёт каталог секретов `/srv/secrets` (права `0700`, владелец 65532 — пользователь панели; root читает всё);
+- создаёт `/srv/secrets/homelab.env` из образца и вписывает в него `DOCKER_GID` (группа docker, через неё `ops-bot`
+  читает `docker.sock`), `LLM_ADMIN_TOKEN` (общий секрет `ops-bot` и `llm-gateway`, вводить его не нужно) и `LAN_IP`
+  (адрес сервера в домашней сети, на нём слушают Dozzle и панель; проверить, что адрес верный);
+- создаёт `/var/lib/homelab`: там журнал обновлений и сводка копий для панели;
 - создаёт сеть Docker `homelab`: через неё боты ходят в шлюз. Работающие контейнеры это не трогает;
-- создаёт `/srv/ops-bot` и `/srv/llm-gateway`;
+- создаёт `/srv/ops-bot` и `/srv/llm-gateway` и их файлы секретов;
 - ставит юниты systemd и включает:
   - `homelab-update.timer` — проверка новых версий раз в 5 минут;
   - `homelab-backup.timer` — копии баз в 3:30;
@@ -65,12 +68,26 @@ sudo /opt/homelab/scripts/install.sh
 Ночное обновление медиастека остаётся выключенным, пока жив Watchtower. Его включает шаг 3 в
 [migration.md](migration.md).
 
-## 4. Служебный бот
+## 4. Секреты и первый запуск
 
-В `/opt/homelab/.env` вписать `OPS_BOT_TOKEN` и `OPS_CHAT_ID`. Бота лучше создать нового в @BotFather: неделю
+Все секреты лежат в `/srv/secrets/<имя>.env`. Файлы создаются из образцов `env/*.env.example`; обязательные
+переменные помечены в образце словом «Обязателен». Пока они пусты, `update.sh` сервис не запускает и один раз
+присылает в служебный бот список недостающих ключей.
+
+В `/srv/secrets/homelab.env` вписать `OPS_BOT_TOKEN`, `OPS_CHAT_ID` и `AGE_RECIPIENT` (открытый ключ `age1…`,
+получить на Mac: `age-keygen -o key.txt`; закрытый ключ из `key.txt` — в менеджер паролей, файл удалить).
+В `/srv/secrets/llm-gateway.env` — `GEMINI_API_KEY`. Файлы `ops-bot` и `llm-gateway` `install.sh` уже создал.
+Править от root: `sudo nano /srv/secrets/homelab.env`. После установки панели правка идёт в её Сейфе.
+
+Дальше ничего запускать руками не нужно: в течение 5 минут `update.sh` поднимет стек `platform` (`ops-bot`,
+`llm-gateway`, `dozzle`) и пришлёт «… установлен». Сервисы стека `apps` ставятся так же, кроме тех, у которых на
+сервере есть старая служба systemd с тем же именем: их переносит [migration.md](migration.md), чтобы не запустить
+второй экземпляр с пустой базой.
+
+Бота для `OPS_BOT_TOKEN` лучше создать нового в @BotFather. Бота лучше создать нового в @BotFather: неделю
 `ops-bot` работает рядом с `simply-monitoring`, а два процесса с одним токеном мешают друг другу принимать команды.
 Chat id — твой Telegram ID, его показывает, например, @userinfobot. Новому боту сначала написать `/start`:
-без этого Telegram не даст ему писать первым. Проверка:
+без этого Telegram не даст ему писать первым. Проверка, что токен и chat id верные:
 
 ```bash
 sudo bash -c 'source /opt/homelab/scripts/lib.sh; notify "homelab установлен"'

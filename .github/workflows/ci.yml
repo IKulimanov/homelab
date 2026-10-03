@@ -13,13 +13,17 @@ jobs:
       - name: shellcheck
         run: shellcheck -x scripts/*.sh
       - name: compose-файлы читаются
+        # Файлы секретов не нужны: в compose они required: false.
         run: |
           cp env/homelab.env.example /tmp/homelab.env
           cp env/media.env.example /tmp/media.env
           echo DOCKER_GID=999 >> /tmp/homelab.env
-          for svc in budget-bot wellbeing-bot nutrition-assistant llm-gateway ops-bot; do
-            sudo mkdir -p /srv/$svc && sudo touch /srv/$svc/.env
-          done
           docker compose -f stacks/platform/compose.yaml --env-file /tmp/homelab.env config -q
           docker compose -f stacks/apps/compose.yaml --env-file /tmp/homelab.env config -q
           docker compose -f stacks/media/compose.yaml --env-file /tmp/media.env config -q
+      - name: new-service.sh даёт рабочий compose
+        run: |
+          cp -r . /tmp/check && cd /tmp/check
+          scripts/new-service.sh ci-test-bot --llm 1
+          docker compose -f stacks/apps/compose.yaml --env-file /tmp/homelab.env config -q
+          grep -q '^  ci-test-bot:' stacks/platform/config/llm-gateway.yaml

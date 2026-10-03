@@ -8,4 +8,6 @@ Requires=docker.service
 [Service]
 Type=oneshot
 ExecStartPre=/usr/bin/rm -f /srv/ops-bot/trigger/update
+# Если идёт плановый прогон — дождаться его, а не потерять нажатие.
+Environment=UPDATE_LOCK_WAIT=900
 ExecStart=/opt/homelab/scripts/update.sh all
