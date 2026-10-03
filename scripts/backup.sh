@@ -64,7 +64,7 @@ main() {
   [[ $EUID -eq 0 ]] || die "нужен root"
   [[ $# -ge 1 ]] || die "использование: backup.sh <svc> [метка] | --all"
   if [[ "$REQUIRE_MOUNT" == "yes" ]] && ! mountpoint -q "$BACKUP_ROOT"; then
-    notify "Бэкап не сделан: $BACKUP_ROOT не смонтирован."
+    notify "Бэкап не сделан: $BACKUP_ROOT не смонтирован." backup-fail
     die "$BACKUP_ROOT не смонтирован"
   fi
 
@@ -81,7 +81,7 @@ main() {
       fi
     done
     if [[ ${#failed[@]} -gt 0 ]]; then
-      notify "Бэкап с ошибками: ${failed[*]}. Подробности: journalctl -u homelab-backup"
+      notify "Бэкап с ошибками: ${failed[*]}. Подробности: journalctl -u homelab-backup" backup-fail
       exit 1
     fi
   else

@@ -35,10 +35,28 @@ compose() {
   docker compose "${args[@]}" "$@"
 }
 
-# notify TEXT — сообщение служебному боту. Без токена только пишет в журнал: обновление не должно падать
-# из-за уведомления.
+# Фразы Бендера и GIF событий. GIF хранит ops-bot в своей базе, сюда — только file_id Telegram.
+VOICE_DIR=${VOICE_DIR:-$HOMELAB_DIR/stacks/platform/config/voice}
+OPS_DB=${OPS_DB:-$SRV_DIR/ops-bot/data/ops.db}
+
+# quip EVENT [NAME] — случайная фраза события, {name} заменяется на NAME. Нет фраз — пусто.
+quip() {
+  local file="$VOICE_DIR/$1.txt"
+  [[ -r "$file" ]] || return 0
+  grep -v '^#' "$file" | grep . | shuf -n 1 | sed "s|{name}|${2:-}|g"
+}
+
+# gif_for EVENT — file_id случайной GIF события из базы ops-bot. Нет базы или GIF — пусто.
+gif_for() {
+  [[ -r "$OPS_DB" ]] && command -v sqlite3 >/dev/null || return 0
+  [[ "$1" =~ ^[a-z-]+$ ]] || return 0
+  sqlite3 -readonly "$OPS_DB" "SELECT file_id FROM gifs WHERE event = '$1' ORDER BY random() LIMIT 1" 2>/dev/null || true
+}
+
+# notify TEXT [EVENT] — сообщение служебному боту, с фразой и GIF события, если они есть. Без токена только
+# пишет в журнал: обновление не должно падать из-за уведомления.
 notify() {
-  local text=$1 token chat
+  local text=$1 event=${2:-} token chat line gif api
   token=$(env_get OPS_BOT_TOKEN "$HOMELAB_ENV")
   chat=$(env_get OPS_CHAT_ID "$HOMELAB_ENV")
   log "уведомление: $text"
@@ -46,7 +64,21 @@ notify() {
     log "OPS_BOT_TOKEN или OPS_CHAT_ID не заданы, сообщение не отправлено"
     return 0
   fi
-  curl -fsS --max-time 15 -o /dev/null "https://api.telegram.org/bot${token}/sendMessage" \
+  if [[ -n "$event" ]]; then
+    line=$(quip "$event")
+    [[ -n "$line" ]] && text="$text
+
+$line"
+    gif=$(gif_for "$event")
+  fi
+  api="https://api.telegram.org/bot${token}"
+  # Подпись к GIF — не длиннее 1024 символов; длинный текст (например, с логом) идёт обычным сообщением.
+  if [[ -n "$gif" && ${#text} -le 1000 ]] &&
+    curl -fsS --max-time 15 -o /dev/null "$api/sendAnimation" \
+      --data-urlencode "chat_id=${chat}" --data-urlencode "animation=${gif}" --data-urlencode "caption=${text}"; then
+    return 0
+  fi
+  curl -fsS --max-time 15 -o /dev/null "$api/sendMessage" \
     --data-urlencode "chat_id=${chat}" --data-urlencode "text=${text}" \
     -d disable_web_page_preview=true || log "не удалось отправить уведомление"
 }

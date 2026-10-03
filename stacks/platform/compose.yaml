@@ -40,6 +40,8 @@ services:
     container_name: ops-bot
     # Группа docker хоста: без неё пользователь nonroot не откроет сокет. Значение пишет install.sh.
     group_add: ["${DOCKER_GID}"]
+    # Ключ шлюза для комментария к недельному отчёту: GEMINI_API_KEY, GEMINI_BASE_URL (install.sh llm-key ops-bot).
+    env_file: /srv/ops-bot/.env
     environment:
       TZ: ${TZ:-Asia/Bishkek}
       OPS_BOT_TOKEN: ${OPS_BOT_TOKEN}
@@ -56,12 +58,17 @@ services:
       OPS_DISK: ${OPS_DISK:-}
       OPS_LOAD: ${OPS_LOAD:-}
       OPS_BATTERY: ${OPS_BATTERY:-}
+      OPS_ALERTS: ${OPS_ALERTS:-temp,disk,service,llm}
+      OPS_REPORT_AT: ${OPS_REPORT_AT:-Sun 20:00}
+      OPS_VOICE: /voice
       OPS_HOSTFS: /hostfs
       OPS_TRIGGER: /trigger/update
       OPS_DB: /data/ops.db
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/ops-bot/data:/data
+      # Фразы Бендера. Каталог, а не файлы: после git pull бот видит новые версии без пересоздания.
+      - ./config/voice:/voice:ro
       # Файл-триггер команды /update; его ждёт homelab-update.path на хосте.
       - /srv/ops-bot/trigger:/trigger
       # Корень хоста только для чтения: по нему считается место на дисках. rslave — чтобы был виден

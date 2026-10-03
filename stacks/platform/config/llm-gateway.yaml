@@ -30,6 +30,9 @@ clients:
     monthly_limit_usd: 3
   nutrition-assistant:
     monthly_limit_usd: 10
+  # Комментарий Бендера к недельному отчёту: четыре вызова в месяц, доли цента.
+  ops-bot:
+    monthly_limit_usd: 0.5
 
 total_monthly_limit_usd: 15
 
