@@ -40,13 +40,13 @@ journalctl -u homelab-update -n 50
 
 1. Найти прошлую версию: в сообщении об обновлении (`sha-…` слева от стрелки) или
    `docker image ls ghcr.io/ikulimanov/<svc>`.
-2. Закрепить её в `/opt/homelab/.env`: `BUDGET_BOT_TAG=sha-2740b45`. Закреплённую версию `update.sh` не трогает,
+2. Закрепить её в `/srv/secrets/homelab.env`: `BUDGET_BOT_TAG=sha-2740b45`. Закреплённую версию `update.sh` не трогает,
    и новые сборки из `main` не приедут.
 3. Если новая версия меняла схему базы, восстановить копию `pre-update` ([backup-restore.md](backup-restore.md)).
 4. Применить:
 
    ```bash
-   cd /opt/homelab && sudo docker compose -f stacks/apps/compose.yaml --env-file .env up -d --no-deps budget-bot
+   cd /opt/homelab && sudo docker compose -f stacks/apps/compose.yaml --env-file /srv/secrets/homelab.env up -d --no-deps budget-bot
    ```
 
 Когда исправление в `main` готово, строку `BUDGET_BOT_TAG=` нужно очистить. Следующий запуск таймера поставит

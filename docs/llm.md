@@ -11,8 +11,8 @@
 
 ## Ключи
 
-- Настоящий ключ Gemini — только в `/srv/llm-gateway/.env`, `GEMINI_API_KEY`.
-- У каждого сервиса свой ключ шлюза: в `/srv/llm-gateway/.env` как `LLM_KEY_<СЕРВИС>`, в `.env` сервиса как
+- Настоящий ключ Gemini — только в `/srv/secrets/llm-gateway.env`, `GEMINI_API_KEY`.
+- У каждого сервиса свой ключ шлюза: в `/srv/secrets/llm-gateway.env` как `LLM_KEY_<СЕРВИС>`, в `.env` сервиса как
   `GEMINI_API_KEY`. Бот не знает, что ходит через шлюз: он шлёт обычный запрос Gemini на другой адрес.
 - Новый ключ сервису или замена утёкшего:
 
@@ -40,7 +40,7 @@
 - `balance_alert_usd` — алерт, когда расчётный остаток меньше.
 
 Лимит исчерпан — шлюз отвечает 429 `RESOURCE_EXHAUSTED`, как сам Gemini при превышении квоты, и в Google запрос
-не отправляет. Бот видит это как обычную ошибку Gemini. Другие сервисы работают, пока не исчерпан общий лимит. Месяц считается по `TZ` из `/opt/homelab/.env` и сбрасывается 1-го числа.
+не отправляет. Бот видит это как обычную ошибку Gemini. Другие сервисы работают, пока не исчерпан общий лимит. Месяц считается по `TZ` из `/srv/secrets/homelab.env` и сбрасывается 1-го числа.
 
 Ошибки Google (429, 500 и другие) передаются боту как есть и пишутся в учёт с нулевой стоимостью.
 
@@ -63,9 +63,9 @@ Google не отдаёт остаток предоплаты через API, о�
 
 | Путь | Что |
 |---|---|
-| `/srv/llm-gateway/.env` | настоящий ключ Gemini и ключи сервисов |
+| `/srv/secrets/llm-gateway.env` | настоящий ключ Gemini и ключи сервисов |
 | `/srv/llm-gateway/data/llm-gateway.db` | журнал вызовов (без текстов запросов) и сверки баланса |
-| `/opt/homelab/.env`, `LLM_ADMIN_TOKEN` | токен админ-API, его используют ops-bot и шлюз |
+| `/srv/secrets/homelab.env`, `LLM_ADMIN_TOKEN` | токен админ-API, его используют ops-bot и шлюз |
 
 Админ-API (`/admin/status`, `/admin/usage`, `/admin/topup`, `/admin/balance`) требует заголовок
 `Authorization: Bearer <LLM_ADMIN_TOKEN>`. Без `LLM_ADMIN_TOKEN` админ-API выключен, а команды LLM в ops-bot

@@ -13,11 +13,19 @@
 Медиастек сюда не входит. Его конфиги лежат в `/data/configs`, а Sonarr, Radarr и Prowlarr делают свои копии сами
 (Settings → General → Backup).
 
+Секреты: каждый день в то же время весь каталог `/srv/secrets` упаковывается и шифруется открытым ключом
+`AGE_RECIPIENT` из `/srv/secrets/homelab.env`, файл `/mnt/backup/secrets/secrets-ГГГГ-ММ-ДД.tar.age`, хранятся 30 дней.
+Расшифровать можно только закрытым ключом, который лежит у тебя в менеджере паролей, а не на сервере. Без
+`AGE_RECIPIENT` копия секретов не делается, в журнал пишется предупреждение.
+
 Копия вручную:
 
 ```bash
 sudo /opt/homelab/scripts/backup.sh budget-bot manual
+sudo /opt/homelab/scripts/backup.sh secrets
 ```
+
+Список копий для панели (экран «Морозильник») — `/var/lib/homelab/backups.json`, обновляется после каждого `--all`.
 
 ## Восстановление
 
@@ -37,3 +45,23 @@ docker logs -f budget-bot
 
 Если вместе с базой откатывается и версия программы, сначала закрепить тег ([update-rollback.md](update-rollback.md)),
 потом восстанавливать базу.
+
+## Восстановление секретов
+
+Файл зашифрован, копировать его можно куда угодно. На сервере:
+
+```bash
+sudo install -m 0644 -o "$USER" /mnt/backup/secrets/secrets-2026-10-01.tar.age ~/
+```
+
+На Mac, с закрытым ключом из менеджера паролей в файле `key.txt`:
+
+```bash
+scp server:secrets-2026-10-01.tar.age .
+age -d -i key.txt secrets-2026-10-01.tar.age | tar -tzf -
+age -d -i key.txt secrets-2026-10-01.tar.age > secrets.tar.gz
+```
+
+Первая команда `age` только показывает список файлов. Нужный файл — на сервер в `/srv/secrets/`, права `0600`,
+владелец `65532:65532`, затем «Применить» в панели или `sudo systemctl start homelab-update-now`. После этого
+удалить `key.txt` и `secrets.tar.gz` с Mac.

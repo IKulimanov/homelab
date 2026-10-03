@@ -2,7 +2,7 @@
 
 Jellyfin с автоматической загрузкой: qBittorrent качает, Prowlarr ищет по трекерам, Sonarr и Radarr управляют
 сериалами и фильмами, Bazarr подбирает субтитры, Jellyseerr принимает запросы, Notifiarr пишет о загрузках
-в Telegram. Compose-проект `media-stack`, файл `stacks/media/compose.yaml`, переменные `/srv/media/.env`.
+в Telegram. Compose-проект `media-stack`, файл `stacks/media/compose.yaml`, переменные `/srv/secrets/media.env`.
 
 Обновление — `update.sh nightly` в 4:00, образы `:latest` от linuxserver и авторов приложений.
 
@@ -99,4 +99,4 @@ sudo tar -czf /mnt/backup/media-configs-$(date +%F).tar.gz -C /data configs
   каталоги на разных разделах. Hardlink между разделами невозможен.
 - **Контейнер не стартует.** `docker logs <контейнер>`, `docker inspect -f '{{json .State.Health}}' <контейнер>`.
   Sonarr и Radarr ждут, пока qBittorrent и Prowlarr станут healthy.
-- **Нет прав на файлы.** `PUID` и `PGID` в `/srv/media/.env` должны совпадать с владельцем `/data`.
+- **Нет прав на файлы.** `PUID` и `PGID` в `/srv/secrets/media.env` должны совпадать с владельцем `/data`.

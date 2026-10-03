@@ -36,7 +36,7 @@
 | копия баз не сделана | `backup.sh` | всегда |
 | недельный отчёт | ops-bot, `OPS_REPORT_AT` | всегда |
 
-Остальные категории выключены, их можно включить в `/opt/homelab/.env`, например
+Остальные категории выключены, их можно включить в `/srv/secrets/homelab.env`, например
 `OPS_ALERTS=temp,disk,service,llm,mem`:
 
 | Категория | Что |
@@ -46,10 +46,10 @@
 | `health` | healthcheck контейнера не проходит (`unhealthy`) |
 | `gateway` | шлюз LLM не отвечает, модель без цены в конфиге |
 
-Пересоздать бот после правки `.env`:
+Пересоздать бот после правки `/srv/secrets/homelab.env` (или «Применить» в Сейфе панели):
 
 ```bash
-cd /opt/homelab && sudo docker compose -f stacks/platform/compose.yaml --env-file .env up -d ops-bot
+cd /opt/homelab && sudo docker compose -f stacks/platform/compose.yaml --env-file /srv/secrets/homelab.env up -d ops-bot
 ```
 
 Остановка через `docker stop`, `/stop`, `/restart` или обновление алертом не считается. Падение считается
@@ -76,7 +76,7 @@ cd /opt/homelab && sudo docker compose -f stacks/platform/compose.yaml --env-fil
 | load average за 5 минут на ядро | 2 | 4 | `OPS_LOAD` |
 | заряд батареи при работе от неё, % | 20 | 10 | `OPS_BATTERY` |
 
-Порог меняется строкой в `/opt/homelab/.env`, например `OPS_CPU_TEMP=80,92`, и пересозданием бота командой выше.
+Порог меняется строкой в `/srv/secrets/homelab.env`, например `OPS_CPU_TEMP=80,92`, и пересозданием бота командой выше.
 
 ## Недельный отчёт
 
@@ -139,13 +139,13 @@ GIF приходит с первым алертом, «восстановило�
 
 Dozzle в стеке `platform` показывает логи всех контейнеров из compose-проектов в реальном времени, с поиском
 и фильтром: `http://<LAN_IP>:8889`. Входа нет, поэтому порт слушает только адрес в домашней сети (`LAN_IP`
-в `/opt/homelab/.env`, его заполняет `install.sh`). Без `LAN_IP` порт слушает только сам сервер, открыть можно через
+в `/srv/secrets/homelab.env`, его заполняет `install.sh`). Без `LAN_IP` порт слушает только сам сервер, открыть можно через
 `ssh -L 8889:localhost:8889 <сервер>`. Кнопок остановки и перезапуска в Dozzle нет: это делают `ops-bot` и панель.
 
 ## Внешний пульс
 
 Если упадёт Docker или весь сервер, `ops-bot` об этом не скажет. Для этого внешний сервис, например
-healthchecks.io: создать проверку с периодом 5 минут и запасом 10, её адрес пинга вписать в `/opt/homelab/.env`
+healthchecks.io: создать проверку с периодом 5 минут и запасом 10, её адрес пинга вписать в `/srv/secrets/homelab.env`
 как `HEALTHCHECK_URL` и пересоздать `ops-bot` командой выше. В healthchecks.io подключить уведомления в Telegram.
 `ops-bot` пингует раз в 5 минут и только когда Docker отвечает.
 
@@ -154,8 +154,8 @@ healthchecks.io: создать проверку с периодом 5 мину�
 - **Температура «нет данных».** `ops-bot` читает `/sys/class/hwmon` хоста. На хосте должны работать датчики:
   `sensors` показывает `coretemp` или `k10temp`, а для SSD — `nvme`. Если нет, `sudo sensors-detect` и перезагрузка
   модулей; Docker при этом не трогается.
-- **Нет доступа к Docker.** В логе `permission denied` на `docker.sock`: `DOCKER_GID` в `/opt/homelab/.env` не
+- **Нет доступа к Docker.** В логе `permission denied` на `docker.sock`: `DOCKER_GID` в `/srv/secrets/homelab.env` не
   совпадает с `getent group docker`. Исправить и пересоздать контейнер.
-- **Отчёт без комментария Gemini.** В логе бота `комментарий к отчёту не получен`: нет ключа в `/srv/ops-bot/.env`
+- **Отчёт без комментария Gemini.** В логе бота `комментарий к отчёту не получен`: нет ключа в `/srv/secrets/ops-bot.env`
   или исчерпан лимит клиента `ops-bot`.
 - **Логи самого бота:** `docker logs --tail 100 ops-bot`.

@@ -39,7 +39,7 @@
   базы, ставит новую версию, присылает итог.
 - Цены и лимиты LLM: правка `stacks/platform/config/llm-gateway.yaml` и push, шлюз подхватит сам.
 - Медиастек: каждую ночь в 4:00 свежие образы `:latest`.
-- Откат: тег в `/opt/homelab/.env`, например `BUDGET_BOT_TAG=sha-2740b45`, и копия базы до обновления —
+- Откат: тег в `/srv/secrets/homelab.env`, например `BUDGET_BOT_TAG=sha-2740b45`, и копия базы до обновления —
   [update-rollback.md](docs/update-rollback.md).
 
 ## Где что лежит
@@ -47,11 +47,11 @@
 | Путь | Что |
 |---|---|
 | `/opt/homelab` | этот репозиторий; правки только через git |
-| `/opt/homelab/.env` | токен служебного бота, пороги, закреплённые версии |
-| `/srv/<сервис>/.env` | секреты сервиса; у `llm-gateway` — настоящий ключ Gemini |
+| `/srv/secrets/homelab.env` | токен служебного бота, пороги, закреплённые версии |
+| `/srv/secrets/<сервис>.env` | секреты сервиса; у `llm-gateway` — настоящий ключ Gemini |
 | `/srv/<сервис>/data` | база сервиса |
 | `/srv/nutrition-assistant/config.yaml` | настройки `nutrition-assistant` |
-| `/srv/media/.env` | пути и PUID медиастека |
+| `/srv/secrets/media.env` | пути и PUID медиастека |
 | `/data` | фильмы, сериалы, конфиги медиастека |
 | `/mnt/backup/<сервис>` | копии баз: каждый день в 3:30 и перед каждым обновлением, 30 дней |
 
