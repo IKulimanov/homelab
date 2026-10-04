@@ -119,7 +119,7 @@ func TestGIFCommand(t *testing.T) {
 	}
 	say("/gif temp", "id1")
 	say("/gif temp", "id2")
-	if r := say("/gif", ""); !strings.Contains(r, "temp: 2") {
+	if r := say("/gif", ""); !strings.Contains(r, "(temp): 2") {
 		t.Fatalf("список: %q", r)
 	}
 	say("/gif clear temp", "")
@@ -128,6 +128,48 @@ func TestGIFCommand(t *testing.T) {
 	}
 	if r := f.svc.HandleMessage(ctx, Incoming{ChatID: 7, Text: "/gif temp", GIF: "id"}); r != nil {
 		t.Fatal("чужой чат сохранил GIF")
+	}
+}
+
+func TestGIFWithoutCommandAsksEventByButtons(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := f.svc.HandleMessage(ctx, Incoming{ChatID: ownChat, GIF: "id-disk"})
+	var data []string
+	for _, row := range r[0].Buttons {
+		for _, b := range row {
+			data = append(data, b.Data)
+		}
+	}
+	if len(data) != len(gifEvents) || data[1] != "gif:disk" {
+		t.Fatalf("кнопки событий: %v", data)
+	}
+
+	r = f.svc.Callback(ctx, ownChat, "gif:disk")
+	if ids, _ := f.svc.store.GIFs(ctx, "disk"); len(ids) != 1 || ids[0] != "id-disk" {
+		t.Fatalf("после кнопки: %v, ответ %q", ids, r[0].Text)
+	}
+}
+
+func TestGIFCommandUsesLastGIFWithoutReply(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.svc.HandleMessage(ctx, Incoming{ChatID: ownChat, GIF: "id-last"})
+	f.svc.HandleMessage(ctx, Incoming{ChatID: ownChat, Text: "/gif temp"})
+	if ids, _ := f.svc.store.GIFs(ctx, "temp"); len(ids) != 1 || ids[0] != "id-last" {
+		t.Fatalf("GIF без ответа: %v", ids)
+	}
+}
+
+func TestGIFButtonWithoutGIFAfterRestart(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	r := f.svc.Callback(ctx, ownChat, "gif:disk")
+	if !strings.Contains(r[0].Text, "ещё раз") {
+		t.Fatalf("ответ: %q", r[0].Text)
+	}
+	if ids, _ := f.svc.store.GIFs(ctx, "disk"); len(ids) != 0 {
+		t.Fatalf("сохранено без GIF: %v", ids)
 	}
 }
 

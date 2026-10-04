@@ -33,10 +33,11 @@ const help = `Команды:
 /usage — расход LLM за месяц и за сегодня
 /topup <сумма> — записать пополнение Gemini в долларах
 /balance [сумма] — остаток; с суммой — сверка с AI Studio
-/gif <событие> — ответом на GIF: показывать её при событии; /gif — список
+/gif — GIF по событиям; добавить — просто пришли GIF боту
 /panel — ссылка входа в панель «Планета Экспресс»`
 
-// Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили.
+// Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили;
+// GIF файлом или видео ops-bot заранее перезаливает анимацией.
 type Incoming struct {
 	ChatID int64
 	Text   string
@@ -55,6 +56,11 @@ func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
 		return nil
 	}
 	cmd, args := parseCommand(in.Text)
+	if in.GIF != "" {
+		s.mu.Lock()
+		s.lastGIF = in.GIF
+		s.mu.Unlock()
+	}
 	var r Reply
 	switch cmd {
 	case "status":
@@ -85,23 +91,39 @@ func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
 		r = s.cmdGIF(ctx, args, in.GIF)
 	case "panel":
 		r = s.cmdPanel(ctx)
+	case "":
+		if in.GIF != "" {
+			r = Reply{Text: "🎬 GIF получил. Когда её показывать?", Buttons: gifButtons()}
+			break
+		}
+		r = Reply{Text: s.say(help, "help", "")}
 	default:
 		r = Reply{Text: s.say(help, "help", "")}
 	}
 	return []Reply{r}
 }
 
-// Callback — нажатие кнопки: подтверждение остановки.
+// Callback — нажатие кнопки: подтверждение остановки или выбор события для GIF.
 func (s *Service) Callback(ctx context.Context, chatID int64, data string) []Reply {
 	if chatID != s.cfg.ChatID {
 		s.log.Warn("кнопка из чужого чата проигнорирована", "chat_id", chatID)
 		return nil
+	}
+	if event, ok := strings.CutPrefix(data, "gif:"); ok {
+		return []Reply{s.cmdGIF(ctx, []string{event}, "")}
 	}
 	name, ok := strings.CutPrefix(data, "stop:")
 	if !ok {
 		return []Reply{{Text: "Отменено."}}
 	}
 	return []Reply{s.withContainer(ctx, []string{name}, s.stop)}
+}
+
+// AboutGIF — сообщение с GIF относится к GIF: подписи нет, она не команда или это команда /gif.
+// Ответ «/logs budget-bot» на сообщение с GIF к ней не относится.
+func AboutGIF(text string) bool {
+	cmd, _ := parseCommand(text)
+	return cmd == "" || cmd == "gif"
 }
 
 // parseCommand: «/logs@ops_bot budget-bot 100» → «logs», [budget-bot 100].
@@ -315,42 +337,62 @@ func (s *Service) stateLine(ctx context.Context, c docker.Container) string {
 	}
 }
 
-// cmdGIF: «/gif temp» ответом на GIF — запомнить; «/gif» — список; «/gif clear temp» — забыть все GIF события.
+// cmdGIF: «/gif temp» — запомнить GIF из сообщения, из ответа или последнюю присланную; «/gif» — список;
+// «/gif clear temp» — забыть все GIF события.
 func (s *Service) cmdGIF(ctx context.Context, args []string, fileID string) Reply {
-	events := strings.Join(gifEvents, ", ")
 	if len(args) == 0 {
 		counts, err := s.store.GIFCounts(ctx)
 		if err != nil {
-			return Reply{Text: err.Error()}
+			return Reply{Text: "⚠️ Не прочитал список GIF: " + err.Error()}
 		}
 		var b strings.Builder
-		b.WriteString("GIF по событиям:\n")
+		b.WriteString("🎬 GIF по событиям\n\n")
 		for _, e := range gifEvents {
-			fmt.Fprintf(&b, "%s: %d\n", e, counts[e])
+			fmt.Fprintf(&b, "%s (%s): %d\n", gifLabels[e], e, counts[e])
 		}
-		b.WriteString("\nДобавить: ответь на GIF командой /gif <событие> или пришли GIF с такой подписью. Убрать: /gif clear <событие>")
+		b.WriteString("\n➕ Добавить: просто пришли GIF и выбери событие кнопкой.\n🗑 Убрать все GIF события: /gif clear <событие>")
 		return Reply{Text: b.String()}
 	}
+	events := strings.Join(gifEvents, ", ")
 	if args[0] == "clear" {
 		if len(args) < 2 || !slices.Contains(gifEvents, args[1]) {
-			return Reply{Text: "Какое событие очистить? " + events}
+			return Reply{Text: "🤔 Какое событие очистить? Есть: " + events}
 		}
 		n, err := s.store.ClearGIFs(ctx, args[1])
 		if err != nil {
-			return Reply{Text: err.Error()}
+			return Reply{Text: "⚠️ Не очистил: " + err.Error()}
 		}
-		return Reply{Text: fmt.Sprintf("%s: убрано GIF %d.", args[1], n)}
+		return Reply{Text: fmt.Sprintf("🗑 %s: убрал GIF — %d.", gifLabels[args[1]], n)}
 	}
 	event := args[0]
 	if !slices.Contains(gifEvents, event) {
-		return Reply{Text: "Нет такого события. Есть: " + events}
+		return Reply{Text: "🤔 Нет такого события. Есть: " + events}
 	}
 	if fileID == "" {
-		return Reply{Text: "Нужна GIF: ответь командой /gif " + event + " на сообщение с GIF или пришли GIF с этой подписью."}
+		s.mu.Lock()
+		fileID = s.lastGIF
+		s.mu.Unlock()
+	}
+	if fileID == "" {
+		return Reply{Text: "🎬 Не вижу GIF. Пришли её ещё раз — и выбери событие кнопкой."}
 	}
 	if err := s.store.AddGIF(ctx, event, fileID); err != nil {
-		return Reply{Text: err.Error()}
+		return Reply{Text: "⚠️ GIF не сохранилась: " + err.Error()}
 	}
 	ids, _ := s.store.GIFs(ctx, event)
-	return Reply{Text: fmt.Sprintf("Запомнил для %s, всего %d.", event, len(ids))}
+	return Reply{Text: fmt.Sprintf("✅ Запомнил для «%s». GIF у события: %d.", gifLabels[event], len(ids))}
+}
+
+// gifButtons — кнопки выбора события, по две в ряд.
+func gifButtons() [][]Button {
+	var rows [][]Button
+	for i, e := range gifEvents {
+		b := Button{Text: gifLabels[e], Data: "gif:" + e}
+		if i%2 == 0 {
+			rows = append(rows, []Button{b})
+		} else {
+			rows[len(rows)-1] = append(rows[len(rows)-1], b)
+		}
+	}
+	return rows
 }

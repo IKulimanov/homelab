@@ -126,6 +126,9 @@ type Service struct {
 	images map[string]string    // id образа → версия; образы не меняются, кэш вечный
 	last   host.Snapshot
 	ticks  int
+	// lastGIF — последняя присланная GIF: её сохраняет кнопка события или /gif без ответа на сообщение.
+	// Только в памяти: после перезапуска бота GIF просто присылают ещё раз.
+	lastGIF string
 }
 
 type Deps struct {
@@ -221,6 +224,13 @@ func (s *Service) enabled(cat string) bool {
 
 // gifEvents — события, к которым можно привязать GIF командой /gif.
 var gifEvents = []string{"temp", "disk", "died", "recovered", "update-ok", "update-fail", "llm-limit", "balance", "report", "backup-fail"}
+
+// gifLabels — подписи кнопок выбора события для GIF.
+var gifLabels = map[string]string{
+	"temp": "🔥 Перегрев", "disk": "💾 Мало места", "died": "💀 Сервис упал", "recovered": "🎉 Починилось",
+	"update-ok": "🚀 Обновление", "update-fail": "💥 Обновление сломалось", "llm-limit": "💸 Лимит LLM",
+	"balance": "💰 Баланс Gemini", "report": "📊 Отчёт за неделю", "backup-fail": "🧊 Бэкап не сделан",
+}
 
 // gifEvent — общий GIF для близких событий: любая остановка сервиса — «died».
 func gifEvent(event string) string {
