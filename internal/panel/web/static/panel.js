@@ -140,6 +140,15 @@
     });
   }
 
+  // Экипаж: CPU и память приходят отдельным запросом. Docker замеряет их около секунды, страница их не ждёт.
+  const res = $$('[data-res]');
+  if (res.length) {
+    fetch('/api/crew/stats', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}))
+      .then((stats) => res.forEach((el) => { el.textContent = stats[el.dataset.res] || '—'; }));
+  }
+
   // Сейф: отметка «поле тронуто» и показ значения по запросу.
   $$('input[data-key]').forEach((inp) => {
     inp.addEventListener('input', () => { inp.form.elements['t_' + inp.dataset.key].value = '1'; });

@@ -24,7 +24,7 @@
     <div class="facts">
       <span class="muted">версия <b>{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{.Version}}</a>{{else}}{{.Version}}{{end}}</b></span>
       <span class="muted">в работе <b>{{.Uptime}}</b></span>
-      <span class="muted">CPU · память <b>{{.Res}}</b></span>
+      <span class="muted">CPU · память <b data-res="{{.Name}}">{{.Res}}</b></span>
     </div>
     {{if .Missing}}<div class="note warn">Пустые обязательные ключи: <code>{{range $i, $k := .Missing}}{{if $i}}, {{end}}{{$k}}{{end}}</code>. <a href="/vault/{{.Name}}.env">Заполнить в Сейфе</a></div>{{end}}
     {{if .Installed}}

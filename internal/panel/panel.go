@@ -133,6 +133,7 @@ func (s *Server) Handler() http.Handler {
 	auth("POST /deliveries/freeze", s.freeze)
 	auth("GET /api/run", s.apiRun)
 	auth("GET /api/poke", s.apiPoke)
+	auth("GET /api/crew/stats", s.apiCrewStats)
 	mux.HandleFunc("/", s.notFound)
 	return secureHeaders(mux)
 }

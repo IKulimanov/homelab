@@ -133,7 +133,7 @@ type crewView struct {
 	Summary string
 }
 
-func (s *Server) crewCards(ctx context.Context, withStats bool) ([]crewCard, error) {
+func (s *Server) crewCards(ctx context.Context) ([]crewCard, error) {
 	list, err := s.managed(ctx)
 	if err != nil {
 		return nil, err
@@ -146,9 +146,13 @@ func (s *Server) crewCards(ctx context.Context, withStats bool) ([]crewCard, err
 		name := c.Name()
 		have[name] = true
 		v, link := s.version(ctx, c, images)
+		res := "—"
+		if c.State == "running" {
+			res = "…" // замер подгрузит panel.js из /api/crew/stats
+		}
 		cards = append(cards, crewCard{
 			Name: name, Role: cfg.Roles[name], Stack: c.Project(), Cond: conditionOf(c),
-			Version: v, Link: link, Uptime: uptimeOf(c.Status), Res: "—",
+			Version: v, Link: link, Uptime: uptimeOf(c.Status), Res: res,
 			Missing: s.missing(name + ".env"), Installed: true, Self: name == s.Self,
 		})
 	}
@@ -165,9 +169,6 @@ func (s *Server) crewCards(ctx context.Context, withStats bool) ([]crewCard, err
 		}
 		cards = append(cards, card)
 	}
-	if withStats {
-		s.fillStats(ctx, list, cards)
-	}
 	order := map[string]int{"platform": 0, "apps": 1, "media-stack": 2}
 	sort.SliceStable(cards, func(i, j int) bool {
 		oi, oj := order[cards[i].Stack], order[cards[j].Stack]
@@ -179,40 +180,43 @@ func (s *Server) crewCards(ctx context.Context, withStats bool) ([]crewCard, err
 	return cards, nil
 }
 
-// fillStats — CPU и память работающих контейнеров. Каждый замер Docker делает около секунды, поэтому параллельно
-// и с общим пределом времени: медленный контейнер не должен держать всю страницу.
-func (s *Server) fillStats(ctx context.Context, list []docker.Container, cards []crewCard) {
+// statsOf — CPU и память работающих контейнеров: имя → «1,5 % · 64 МБ». Каждый замер Docker делает около секунды,
+// поэтому параллельно и с общим пределом времени; страница Экипажа их не ждёт и берёт через /api/crew/stats.
+func (s *Server) statsOf(ctx context.Context, list []docker.Container) map[string]string {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	ids := map[string]string{}
-	for _, c := range list {
-		if c.State == "running" {
-			ids[c.Name()] = c.ID
-		}
-	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	res := map[string]docker.Stats{}
-	for name, id := range ids {
+	out := map[string]string{}
+	for _, c := range list {
+		if c.State != "running" {
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			st, err := s.Docker.Stats(ctx, id)
+			st, err := s.Docker.Stats(ctx, c.ID)
 			if err != nil {
 				return
 			}
+			res := fmt.Sprintf("%s %% · %s", strings.Replace(fmt.Sprintf("%.1f", st.CPUPercent), ".", ",", 1),
+				humanSize(int64(st.MemBytes)))
 			mu.Lock()
-			res[name] = st
+			out[c.Name()] = res
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
-	for i := range cards {
-		if st, ok := res[cards[i].Name]; ok {
-			cards[i].Res = fmt.Sprintf("%s %% · %s", strings.Replace(fmt.Sprintf("%.1f", st.CPUPercent), ".", ",", 1),
-				humanSize(int64(st.MemBytes)))
-		}
+	return out
+}
+
+func (s *Server) apiCrewStats(w http.ResponseWriter, r *http.Request) {
+	list, err := s.managed(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{})
+		return
 	}
+	writeJSON(w, http.StatusOK, s.statsOf(r.Context(), list))
 }
 
 // uptimeOf — «Up 3 hours (healthy)» → «3 hours»: Docker уже посчитал, переводить не стоит усилий.
@@ -236,7 +240,7 @@ var uptimeWords = strings.NewReplacer(
 func translateUptime(s string) string { return uptimeWords.Replace(s) }
 
 func (s *Server) crew(w http.ResponseWriter, r *http.Request) {
-	cards, err := s.crewCards(r.Context(), true)
+	cards, err := s.crewCards(r.Context())
 	if err != nil {
 		s.render(w, r, "crew", http.StatusBadGateway, page{Title: "Экипаж", Active: "crew", Toast: "Docker не ответил: " + err.Error()})
 		return
