@@ -241,11 +241,21 @@ func gifEvent(event string) string {
 	return event
 }
 
+// activeLines — активные алерты списком: значок уровня и первая строка, без совета «что делать».
+func activeLines(active []alert.Active) string {
+	var b strings.Builder
+	for _, a := range active {
+		first, _, _ := strings.Cut(a.Text, "\n")
+		fmt.Fprintf(&b, "%s %s\n", a.Level.Icon(), first)
+	}
+	return b.String()
+}
+
 func withLine(text, line string) string {
 	if line == "" {
 		return text
 	}
-	return text + "\n\n" + line
+	return text + "\n\n🤖 " + line
 }
 
 // say — ответ на команду с фразой персонажа.

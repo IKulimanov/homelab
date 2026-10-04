@@ -37,7 +37,7 @@ func TestAlertCategoriesFilter(t *testing.T) {
 	if strings.Contains(s, "памяти") {
 		t.Fatalf("алерт по выключенной памяти: %s", s)
 	}
-	if !strings.Contains(s, "Критично: температура CPU 95") {
+	if !strings.Contains(s, "🚨 Критично: температура CPU 95") {
 		t.Fatalf("нет алерта по температуре: %s", s)
 	}
 
@@ -65,15 +65,15 @@ func TestAlertFactFirstThenPhraseAndGIF(t *testing.T) {
 	}
 	id, caption, _ := strings.Cut(f.gifs[0], "|")
 	lines := strings.Split(caption, "\n")
-	if id != "gif-died" || lines[0] != "Критично: budget-bot упал, код выхода 1. Лог: /logs budget-bot" ||
-		lines[len(lines)-1] != "budget-bot откинул копыта" {
+	if id != "gif-died" || lines[0] != "🚨 Критично: budget-bot упал (код выхода 1)" ||
+		lines[len(lines)-1] != "🤖 budget-bot откинул копыта" {
 		t.Fatalf("GIF %q, подпись %q", id, caption)
 	}
 
 	// GIF не ушёл — тот же текст обычным сообщением.
 	f.gifs, f.gifErr = nil, errors.New("telegram недоступен")
 	f.svc.HandleEvent(ctx, event("oom", "ops-bot", "platform", nil))
-	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "Критично: ops-bot") {
+	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "🚨 Критично: ops-bot") {
 		t.Fatalf("запасной текст: %v", s)
 	}
 }
@@ -96,7 +96,7 @@ func TestRepeatGetsAngrierPhraseWithoutGIF(t *testing.T) {
 			got = append(got, s[strings.LastIndex(s, "\n")+1:])
 		}
 	}
-	want := []string{"всё ещё горю", "Критично, всё ещё: температура CPU 95 °C (пороги 75 и 90)", "пишу завещание", "пишу завещание"}
+	want := []string{"🤖 всё ещё горю", "👉 " + hostTip("temp", "cpu-temp"), "🤖 пишу завещание", "🤖 пишу завещание"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("повторы: %q", got)
 	}
@@ -201,11 +201,11 @@ func TestWeeklyReportComment(t *testing.T) {
 			f.svc.Tick(ctx)
 			var report string
 			for _, s := range f.takeSent() {
-				if strings.HasPrefix(s, "Отчёт за неделю") {
+				if strings.HasPrefix(s, "📊 Отчёт за неделю") {
 					report = s
 				}
 			}
-			if !strings.HasSuffix(report, "\n\n"+tc.want) {
+			if !strings.HasSuffix(report, "\n\n🤖 "+tc.want) {
 				t.Fatalf("отчёт: %q", report)
 			}
 		})

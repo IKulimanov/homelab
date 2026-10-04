@@ -223,10 +223,33 @@ func (s *Server) act(ctx context.Context, action, target, detail, text string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := s.Notify(ctx, "Панель: "+text); err != nil {
+		if err := s.Notify(ctx, actionIcon(action)+" Панель: "+text); err != nil {
 			s.Log.Warn("сообщение в Telegram не отправлено", "err", err)
 		}
 	}()
+}
+
+// actionIcon — значок действия в сообщении Telegram: по нему видно, что сделали, не читая текст.
+func actionIcon(action string) string {
+	switch {
+	case action == "login":
+		return "🔑"
+	case action == "secrets":
+		return "🔐"
+	case action == "rollback":
+		return "⏪"
+	case action == "unpin":
+		return "⏩"
+	case action == "backup":
+		return "🧊"
+	case action == "update":
+		return "🔍"
+	case strings.HasPrefix(action, "ledger"):
+		return "💰"
+	case strings.HasPrefix(action, "lab"):
+		return "🧪"
+	}
+	return "🔧"
 }
 
 // page — данные для общего шаблона страницы.

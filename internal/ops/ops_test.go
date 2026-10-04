@@ -214,7 +214,7 @@ func TestDockerEventsToAlerts(t *testing.T) {
 	ctx := context.Background()
 
 	f.svc.HandleEvent(ctx, event("die", "budget-bot", "apps", map[string]string{"exitCode": "2"}))
-	if s := f.takeSent(); len(s) != 1 || !strings.Contains(s[0], "budget-bot упал, код выхода 2") {
+	if s := f.takeSent(); len(s) != 1 || !strings.Contains(s[0], "budget-bot упал (код выхода 2)") {
 		t.Fatalf("падение: %v", s)
 	}
 
@@ -227,7 +227,7 @@ func TestDockerEventsToAlerts(t *testing.T) {
 
 	f.svc.HandleEvent(ctx, event("oom", "ops-bot", "platform", nil))
 	f.svc.HandleEvent(ctx, event("health_status: unhealthy", "llm-gateway", "platform", nil))
-	if s := f.takeSent(); len(s) != 2 || !strings.Contains(s[0], "OOM") || !strings.Contains(s[1], "healthcheck") {
+	if s := f.takeSent(); len(s) != 2 || !strings.Contains(s[0], "OOM") || !strings.Contains(s[1], "проверку здоровья") {
 		t.Fatalf("oom и unhealthy: %v", s)
 	}
 
@@ -253,7 +253,7 @@ func TestFallClosedOnlyAfterStableRun(t *testing.T) {
 	}
 	f.now = f.now.Add(2 * time.Minute)
 	f.svc.Tick(ctx)
-	if s := f.takeSent(); len(s) != 1 || !strings.Contains(s[0], "Восстановилось: budget-bot снова работает") {
+	if s := f.takeSent(); len(s) != 1 || !strings.Contains(s[0], "✅ Восстановилось: budget-bot снова работает") {
 		t.Fatalf("после стабильной работы: %v", s)
 	}
 }
@@ -266,12 +266,12 @@ func TestLLMLimitAlerts(t *testing.T) {
 		TotalSpentUSD: 1.7, TotalLimitUSD: 15,
 	}
 	f.svc.Tick(ctx)
-	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "Внимание: LLM budget-bot") {
+	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "⚠️ Внимание: LLM budget-bot") {
 		t.Fatalf("80 %%: %v", s)
 	}
 	f.llm.st.Clients[0].SpentUSD = 2
 	f.svc.Tick(ctx)
-	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "Критично") || !strings.Contains(s[0], "отклоняются") {
+	if s := f.takeSent(); len(s) != 1 || !strings.HasPrefix(s[0], "🚨 Критично") || !strings.Contains(s[0], "отклоняются") {
 		t.Fatalf("100 %%: %v", s)
 	}
 }
@@ -283,7 +283,7 @@ func TestHostThresholdAndBattery(t *testing.T) {
 	f.metrics.snap.Battery = &host.Battery{Percent: 80, Status: "Discharging", Discharging: true}
 	f.svc.Tick(ctx)
 	s := strings.Join(f.takeSent(), "\n")
-	if !strings.Contains(s, "Критично: занято памяти 96 %") || !strings.Contains(s, "Внимание: сервер работает от батареи") {
+	if !strings.Contains(s, "🚨 Критично: занято памяти 96 %") || !strings.Contains(s, "⚠️ Внимание: сервер работает от батареи") {
 		t.Fatalf("алерты: %s", s)
 	}
 }
@@ -322,7 +322,7 @@ func TestAggregatesAndWeeklyReportOnce(t *testing.T) {
 	}
 	var reports int
 	for _, s := range f.takeSent() {
-		if strings.HasPrefix(s, "Отчёт за неделю 27.09–04.10") {
+		if strings.HasPrefix(s, "📊 Отчёт за неделю 27.09–04.10") {
 			reports++
 			// Замер 30.09 в неделю входит, в отличие от сводки за день выше.
 			if !strings.Contains(s, "CPU °C: 40 / 70 / 99") {
@@ -342,7 +342,7 @@ func TestWeeklyReportNotSentLate(t *testing.T) {
 	f.now = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	f.svc.Tick(context.Background())
 	for _, s := range f.takeSent() {
-		if strings.HasPrefix(s, "Отчёт") {
+		if strings.HasPrefix(s, "📊 Отчёт") {
 			t.Fatalf("опоздавший отчёт: %s", s)
 		}
 	}

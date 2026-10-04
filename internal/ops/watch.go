@@ -83,16 +83,16 @@ func (s *Service) HandleEvent(ctx context.Context, ev docker.Event) {
 			return
 		}
 		s.fall(ctx, name, fmt.Sprintf("код %d", code))
-		s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s упал, код выхода %d. Лог: /logs %s", name, code, name))
+		s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s упал (код выхода %d)\n👉 Лог: /logs %s · перезапустить: /restart %s", name, code, name, name))
 	case ev.Action == "oom":
 		s.fall(ctx, name, "oom")
-		s.alert(ctx, "oom", key, alert.Crit, fmt.Sprintf("%s: не хватило памяти, процесс убит (OOM). Лог: /logs %s", name, name))
+		s.alert(ctx, "oom", key, alert.Crit, oomText(name))
 	case strings.HasPrefix(ev.Action, "health_status"):
 		switch strings.TrimSpace(strings.TrimPrefix(ev.Action, "health_status:")) {
 		case "unhealthy":
-			s.alert(ctx, "health", "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
+			s.alert(ctx, "health", "health:"+name, alert.Crit, unhealthyText(name))
 		case "healthy":
-			s.alert(ctx, "health", "health:"+name, alert.OK, name+": healthcheck снова проходит")
+			s.alert(ctx, "health", "health:"+name, alert.OK, name+" снова отвечает на проверку здоровья")
 		}
 	}
 }
@@ -144,7 +144,8 @@ func (s *Service) checkHost(ctx context.Context, snap host.Snapshot) {
 			return
 		}
 		lvl := alert.High(v, r.Warn, r.Crit)
-		s.alert(ctx, event, key, lvl, fmt.Sprintf("%s %.0f%s (пороги %.0f и %.0f)", label, v, unit, r.Warn, r.Crit))
+		text := fmt.Sprintf("%s %.0f%s (внимание с %.0f, критично с %.0f)", label, v, unit, r.Warn, r.Crit)
+		s.alert(ctx, event, key, lvl, withTip(lvl, text, hostTip(event, key)))
 	}
 	high("temp", "cpu-temp", "температура CPU", snap.CPUTemp, th.CPUTemp, " °C")
 	high("temp", "ssd-temp", "температура SSD", snap.SSDTemp, th.SSDTemp, " °C")
@@ -156,14 +157,16 @@ func (s *Service) checkHost(ctx context.Context, snap host.Snapshot) {
 	if host.Known(snap.Load5) && snap.CPUs > 0 {
 		cpus := float64(snap.CPUs)
 		lvl := alert.High(snap.Load5/cpus, th.Load.Warn, th.Load.Crit)
-		s.alert(ctx, "load", "load", lvl, fmt.Sprintf("load average %.2f при %d ядрах (пороги %.0f и %.0f)",
-			snap.Load5, snap.CPUs, th.Load.Warn*cpus, th.Load.Crit*cpus))
+		text := fmt.Sprintf("нагрузка %.2f при %d ядрах (внимание с %.0f, критично с %.0f)",
+			snap.Load5, snap.CPUs, th.Load.Warn*cpus, th.Load.Crit*cpus)
+		s.alert(ctx, "load", "load", lvl, withTip(lvl, text, hostTip("load", "load")))
 	}
 	if b := snap.Battery; b != nil {
 		if b.Discharging {
 			// Работа от батареи — уже беда: отключилось питание.
 			lvl := max(alert.Warn, alert.Low(b.Percent, th.Battery.Warn, th.Battery.Crit))
-			s.alert(ctx, "battery", "power", lvl, fmt.Sprintf("сервер работает от батареи, заряд %.0f %%", b.Percent))
+			s.alert(ctx, "battery", "power", lvl, fmt.Sprintf("сервер работает от батареи, заряд %.0f %%: пропало питание\n"+
+				"👉 Если свет не вернётся скоро, выключи сервер сам: sudo poweroff", b.Percent))
 		} else {
 			s.alert(ctx, "battery", "power", alert.OK, fmt.Sprintf("питание вернулось, заряд %.0f %%", b.Percent))
 		}
@@ -215,23 +218,25 @@ func (s *Service) checkContainers(ctx context.Context) bool {
 		}
 		switch {
 		case insp.State.Restarting:
-			s.alert(ctx, "restart-loop", key, alert.Crit, fmt.Sprintf("%s перезапускается по кругу, перезапусков %d. Лог: /logs %s", name, insp.RestartCount, name))
+			s.alert(ctx, "restart-loop", key, alert.Crit, fmt.Sprintf("%s падает и перезапускается по кругу (уже %d раз)\n"+
+				"👉 Лог: /logs %s · остановить, пока чинишь: /stop %s", name, insp.RestartCount, name, name))
 		case insp.State.Running:
 			if s.alerts.Is(key) && s.now().Sub(insp.State.StartedAt) >= stableAfter {
 				s.alert(ctx, "died", key, alert.OK, name+" снова работает")
 			}
 			if insp.Health() == "unhealthy" {
-				s.alert(ctx, "health", "health:"+name, alert.Crit, name+": healthcheck не проходит. Лог: /logs "+name)
+				s.alert(ctx, "health", "health:"+name, alert.Crit, unhealthyText(name))
 			} else if insp.Health() == "healthy" {
-				s.alert(ctx, "health", "health:"+name, alert.OK, name+": healthcheck снова проходит")
+				s.alert(ctx, "health", "health:"+name, alert.OK, name+" снова отвечает на проверку здоровья")
 			}
 		default:
 			// 137 и 143 — остановка сигналом (docker stop); такую остановку делают руками или обновление.
 			code := insp.State.ExitCode
 			if code != 0 && code != 137 && code != 143 {
-				s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s остановлен с кодом %d. Лог: /logs %s", name, code, name))
+				s.alert(ctx, "died", key, alert.Crit, fmt.Sprintf("%s остановился с ошибкой (код %d)\n👉 Лог: /logs %s · запустить: /start %s",
+					name, code, name, name))
 			} else if insp.State.OOMKilled {
-				s.alert(ctx, "oom", key, alert.Crit, fmt.Sprintf("%s убит из-за нехватки памяти (OOM)", name))
+				s.alert(ctx, "oom", key, alert.Crit, oomText(name))
 			}
 		}
 	}
@@ -249,22 +254,22 @@ func (s *Service) checkContainers(ctx context.Context) bool {
 func (s *Service) checkLLM(ctx context.Context) {
 	st, err := s.llm.Status(ctx)
 	if err != nil {
-		s.alert(ctx, "gateway", "llm:gateway", alert.Warn, "шлюз LLM не отвечает: "+err.Error())
+		s.alert(ctx, "gateway", "llm:gateway", alert.Warn, "шлюз LLM не отвечает: "+err.Error()+
+			"\n👉 Лог: /logs llm-gateway · перезапустить: /restart llm-gateway")
 		return
 	}
 	s.alert(ctx, "gateway", "llm:gateway", alert.OK, "шлюз LLM снова отвечает")
 
 	for _, c := range st.Clients {
 		p := percent(c.SpentUSD, c.LimitUSD)
+		lvl := alert.High(p, 80, 100)
 		text := fmt.Sprintf("LLM %s: потрачено $%.2f из $%.2f за месяц (%.0f %%)", c.Name, c.SpentUSD, c.LimitUSD, p)
-		if p >= 100 {
-			text += ", запросы отклоняются до 1-го числа. Лимит — в stacks/platform/config/llm-gateway.yaml"
-		}
-		s.alert(ctx, "llm-limit", "llm:"+c.Name, alert.High(p, 80, 100), text)
+		s.alert(ctx, "llm-limit", "llm:"+c.Name, lvl, withTip(lvl, text, limitTip(c.Name, p)))
 	}
 	p := percent(st.TotalSpentUSD, st.TotalLimitUSD)
-	s.alert(ctx, "llm-limit", "llm:total", alert.High(p, 80, 100),
-		fmt.Sprintf("LLM всего: $%.2f из $%.2f за месяц (%.0f %%)", st.TotalSpentUSD, st.TotalLimitUSD, p))
+	lvl := alert.High(p, 80, 100)
+	text := fmt.Sprintf("LLM всего: $%.2f из $%.2f за месяц (%.0f %%)", st.TotalSpentUSD, st.TotalLimitUSD, p)
+	s.alert(ctx, "llm-limit", "llm:total", lvl, withTip(lvl, text, limitTip("", p)))
 
 	if st.Balance.Known {
 		lvl := alert.OK
@@ -274,11 +279,12 @@ func (s *Service) checkLLM(ctx context.Context) {
 		case st.Balance.USD < st.BalanceAlertUSD:
 			lvl = alert.Warn
 		}
-		s.alert(ctx, "balance", "llm:balance", lvl, fmt.Sprintf("баланс Gemini ~$%.2f (порог $%.2f). Пополнить в AI Studio, затем /topup <сумма>",
-			st.Balance.USD, st.BalanceAlertUSD))
+		text := fmt.Sprintf("на счёте Gemini ~$%.2f (предупреждаю, когда меньше $%.2f)", st.Balance.USD, st.BalanceAlertUSD)
+		s.alert(ctx, "balance", "llm:balance", lvl, withTip(lvl, text, "Пополни в AI Studio, потом запиши сумму: /topup 10"))
 	}
 	if len(st.UnpricedModels) > 0 {
-		s.alert(ctx, "prices", "llm:prices", alert.Warn, "нет цены для моделей "+strings.Join(st.UnpricedModels, ", ")+": расход по ним не считается")
+		s.alert(ctx, "prices", "llm:prices", alert.Warn, "нет цены для моделей "+strings.Join(st.UnpricedModels, ", ")+
+			": их расход не считается\n👉 Добавь цены в stacks/platform/config/llm-gateway.yaml")
 	} else {
 		s.alert(ctx, "prices", "llm:prices", alert.OK, "цены есть для всех моделей")
 	}
@@ -325,4 +331,44 @@ func (s *Service) heartbeat(ctx context.Context) {
 		return
 	}
 	resp.Body.Close()
+}
+
+// withTip добавляет к тексту алерта строку «что делать». В сообщении «восстановилось» совет не нужен.
+func withTip(lvl alert.Level, text, tip string) string {
+	if lvl == alert.OK || tip == "" {
+		return text
+	}
+	return text + "\n👉 " + tip
+}
+
+func hostTip(event, key string) string {
+	switch event {
+	case "temp":
+		return "Проверь вентиляцию и пыль. Кто грузит процессор — панель, экран «Экипаж»."
+	case "mem", "swap":
+		return "Кто ест память — панель, экран «Экипаж». Перезапуск виновника: /restart <сервис>"
+	case "disk":
+		return "Что занимает место: sudo du -xh -d1 " + strings.TrimPrefix(key, "disk:") + " | sort -h | tail"
+	case "load":
+		return "Сервер не успевает. Кто грузит — панель, экран «Экипаж»."
+	}
+	return ""
+}
+
+func limitTip(client string, p float64) string {
+	switch {
+	case p >= 100 && client != "":
+		return "Запросы " + client + " отклоняются до 1-го числа. Поднять лимит: stacks/platform/config/llm-gateway.yaml"
+	case p >= 100:
+		return "Запросы отклоняются до 1-го числа. Поднять лимит: stacks/platform/config/llm-gateway.yaml"
+	}
+	return "Кто сколько тратит — /usage"
+}
+
+func oomText(name string) string {
+	return fmt.Sprintf("%s убит: не хватило памяти (OOM)\n👉 Лог: /logs %s. Если повторяется — проверь утечку или подними лимит памяти", name, name)
+}
+
+func unhealthyText(name string) string {
+	return fmt.Sprintf("%s запущен, но не отвечает на проверку здоровья\n👉 Лог: /logs %s · перезапустить: /restart %s", name, name, name)
 }
