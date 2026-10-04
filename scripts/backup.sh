@@ -106,7 +106,8 @@ main() {
   [[ $EUID -eq 0 ]] || die "нужен root"
   [[ $# -ge 1 ]] || die "использование: backup.sh <svc> [метка] | --all | secrets"
   if [[ "$REQUIRE_MOUNT" == "yes" ]] && ! mountpoint -q "$BACKUP_ROOT"; then
-    notify "Бэкап не сделан: $BACKUP_ROOT не смонтирован." backup-fail
+    notify "🧊 Бэкап не сделан: диск копий $BACKUP_ROOT не подключён
+👉 Проверь сетевой диск: mountpoint $BACKUP_ROOT, потом sudo mount -a" backup-fail
     die "$BACKUP_ROOT не смонтирован"
   fi
 
@@ -125,7 +126,8 @@ main() {
     ( backup_secrets ) || failed+=(секреты)
     write_summary
     if [[ ${#failed[@]} -gt 0 ]]; then
-      notify "Бэкап с ошибками: ${failed[*]}. Подробности: journalctl -u homelab-backup" backup-fail
+      notify "🧊 Бэкап с ошибками: не сделаны копии — ${failed[*]}
+👉 Подробности: journalctl -u homelab-backup -n 50" backup-fail
       exit 1
     fi
   elif [[ "$1" == "secrets" ]]; then

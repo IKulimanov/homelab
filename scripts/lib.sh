@@ -76,7 +76,7 @@ notify() {
     line=$(quip "$event")
     [[ -n "$line" ]] && text="$text
 
-$line"
+🤖 $line"
     gif=$(gif_for "$event")
   fi
   api="https://api.telegram.org/bot${token}"
