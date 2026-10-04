@@ -14,7 +14,7 @@
 | `budget-bot` | apps | учёт общих трат | Gemini через шлюз, SQLite | `/srv/budget-bot/data` |
 | `wellbeing-bot` | apps | дневник самочувствия | Gemini через шлюз, SQLite | `/srv/wellbeing-bot/data` |
 | `nutrition-assistant` | apps | учёт питания и веса | Gemini через шлюз, Anthropic, OpenAI, SQLite | `/srv/nutrition-assistant/data` |
-| `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `qbittorrent`, `bazarr`, `jellyseerr`, `flaresolverr`, `notifiarr` | media | медиасервер, [подробно](docs/media.md) | NVIDIA GPU, диск `/data` | `/data` |
+| `jellyfin`, `sonarr`, `radarr`, `prowlarr`, `qbittorrent`, `bazarr`, `jellyseerr`, `flaresolverr` | media | медиасервер, [подробно](docs/media.md) | NVIDIA GPU, диск `/data` | `/data` |
 
 Версии не пишутся здесь, их показывают `/status` и `status.sh`.
 

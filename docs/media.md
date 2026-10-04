@@ -1,8 +1,8 @@
 # Медиастек
 
 Jellyfin с автоматической загрузкой: qBittorrent качает, Prowlarr ищет по трекерам, Sonarr и Radarr управляют
-сериалами и фильмами, Bazarr подбирает субтитры, Jellyseerr принимает запросы, Notifiarr пишет о загрузках
-в Telegram. Compose-проект `media-stack`, файл `stacks/media/compose.yaml`, переменные `/srv/secrets/media.env`.
+сериалами и фильмами, Bazarr подбирает субтитры, Jellyseerr принимает запросы.
+Compose-проект `media-stack`, файл `stacks/media/compose.yaml`, переменные `/srv/secrets/media.env`.
 
 Обновление — `update.sh nightly` в 4:00, образы `:latest` от linuxserver и авторов приложений.
 
@@ -18,7 +18,6 @@ Jellyfin с автоматической загрузкой: qBittorrent кач�
 | Radarr | 7878 | фильмы |
 | Bazarr | 6767 | субтитры |
 | FlareSolverr | 8191 | обход Cloudflare для трекеров |
-| Notifiarr | 5454 | уведомления о загрузках |
 
 Адрес в сети: `http://<IP сервера>:<порт>`, IP — `ip -4 addr show | grep inet`.
 
@@ -67,7 +66,7 @@ docker exec jellyfin nvidia-smi
 
 ## Настройка с нуля
 
-Порядок: qBittorrent → Prowlarr → Radarr, Sonarr → Bazarr → Jellyfin → Jellyseerr → Notifiarr.
+Порядок: qBittorrent → Prowlarr → Radarr, Sonarr → Bazarr → Jellyfin → Jellyseerr.
 
 - **qBittorrent.** Временный пароль: `docker logs qbittorrent 2>&1 | grep "temporary password"`. Загрузки:
   Default Torrent Management Mode — Automatic, путь `/data/torrents`. Категории `radarr` → `/data/torrents/movies`,
@@ -81,9 +80,8 @@ docker exec jellyfin nvidia-smi
 - **Jellyfin.** Библиотеки: Movies — `/data/media/movies`, Shows — `/data/media/tv`. Remote Access: разрешить
   подключения, автоматический проброс портов выключить.
 - **Jellyseerr.** Вход через Jellyfin `http://jellyfin:8096`, синхронизировать библиотеки, добавить Radarr и Sonarr.
-- **Notifiarr.** Нужен аккаунт на notifiarr.com: оттуда API-ключ и настройка Telegram. Образец конфига —
-  `stacks/media/notifiarr.conf`, рабочий лежит в `/data/configs/notifiarr/notifiarr.conf`. В Sonarr и Radarr:
-  Settings → Connect → Notifiarr.
+- **Уведомления.** В Radarr и Sonarr: Settings → Connect → Telegram (токен бота и chat id) — сообщения о загрузках.
+  В Jellyseerr: Settings → Notifications → Telegram — сообщения о запросах. О падении контейнеров пишет ops-bot.
 
 ## Копии настроек
 
