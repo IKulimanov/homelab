@@ -3,7 +3,6 @@
 #  🎬 Media Stack — Jellyfin + *arr + qBittorrent + Telegram
 #  GPU:      NVIDIA (аппаратное транскодирование)
 #  VPN:      отсутствует (можно добавить позже)
-#  Alerts:   Notifiarr → Telegram (полный мониторинг)
 # =============================================================
 #
 #  СТРУКТУРА КАТАЛОГОВ (создаётся скриптом scripts/init.sh):
@@ -22,8 +21,7 @@
 #      ├── prowlarr/
 #      ├── qbittorrent/
 #      ├── jellyseerr/
-#      ├── bazarr/
-#      └── notifiarr/
+#      └── bazarr/
 #
 #  ⚠️  HARDLINK ПРАВИЛО: все *arr-контейнеры монтируют /data как единый корень.
 #      Это единственное условие работы hardlink без копирования файлов.
@@ -248,30 +246,6 @@ services:
       - TZ=${TZ}
     ports:
       - 8191:8191
-    mem_limit: 500m
-    memswap_limit: 500m
-    restart: unless-stopped
-  # ╔══════════════════════════════════════════════════════════╗
-  # ║  МОНИТОРИНГ И УВЕДОМЛЕНИЯ                                ║
-  # ╚══════════════════════════════════════════════════════════╝
-
-  # Notifiarr — универсальный агент уведомлений
-  # Интегрируется с Sonarr/Radarr/Prowlarr и шлёт в Telegram
-  # Требует бесплатный аккаунт на notifiarr.com
-  notifiarr:
-    image: golift/notifiarr:latest
-    container_name: notifiarr
-    hostname: ${HOSTNAME:-mediaserver}
-    environment:
-      - TZ=${TZ}
-    volumes:
-      - ${CONFIG_ROOT}/notifiarr:/config
-      # Доступ к Docker socket для мониторинга контейнеров
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Доступ к /tmp для временных файлов
-      - /tmp:/tmp
-    ports:
-      - 5454:5454
     mem_limit: 500m
     memswap_limit: 500m
     restart: unless-stopped
