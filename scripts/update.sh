@@ -166,6 +166,18 @@ image_of() {
   [[ -n "$cid" ]] && docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true
 }
 
+# recreate STACK ENV SVC OLD_CID REASON — пересоздать сервис. compose не всегда видит правку содержимого env_file:
+# после смены одних секретов up -d оставляет старый контейнер. Поэтому при причине config и том же контейнере —
+# повтор с --force-recreate. Медиастек так не пересоздаётся: его трогают только руками.
+recreate() {
+  local stack=$1 env_file=$2 svc=$3 old_cid=$4 reason=$5
+  compose "$stack" "$env_file" up -d --no-deps "$svc" || return 1
+  [[ "$reason" == *config* && "$stack" != media ]] || return 0
+  [[ -n "$old_cid" && "$(compose "$stack" "$env_file" ps -q "$svc")" == "$old_cid" ]] || return 0
+  log "$svc: compose не пересоздал контейнер после смены настроек, пересоздаю принудительно"
+  compose "$stack" "$env_file" up -d --no-deps --force-recreate "$svc"
+}
+
 update_stack() {
   local stack=$1 env_file=$2 svc old_cid old_id new_id result report=() failed=0 existing=()
   # Скачиваются образы только тех сервисов, у которых уже есть контейнер. Новый сервис может ещё
@@ -210,7 +222,7 @@ $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
       continue
     fi
     # --no-deps: пересоздаётся только этот сервис, его зависимости не трогаются.
-    if ! compose "$stack" "$env_file" up -d --no-deps "$svc"; then
+    if ! recreate "$stack" "$env_file" "$svc" "$old_cid" "$reason"; then
       report+=("❌ $svc: docker compose up завершился с ошибкой
    👉 Подробности: journalctl -u homelab-update -n 50")
       history "$stack" "$svc" "$from" "$from" fail "$reason" "ошибка docker compose up"
