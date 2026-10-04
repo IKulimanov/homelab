@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 type fakeDocker struct {
 	containers []docker.Container
 	calls      []string
+	stats      atomic.Int32 // замеры идут параллельно, поэтому счётчик, а не calls
 }
 
 func (f *fakeDocker) List(context.Context) ([]docker.Container, error) { return f.containers, nil }
@@ -42,6 +44,7 @@ func (f *fakeDocker) Stop(_ context.Context, id string) error {
 	return nil
 }
 func (f *fakeDocker) Stats(context.Context, string) (docker.Stats, error) {
+	f.stats.Add(1)
 	return docker.Stats{CPUPercent: 1.5, MemBytes: 64 << 20}, nil
 }
 func (f *fakeDocker) LogStream(context.Context, string, int, bool, bool) (io.ReadCloser, error) {
@@ -492,5 +495,30 @@ func TestRunningWaitsForRunAfterApply(t *testing.T) {
 	now = now.Add(21 * time.Minute)
 	if f.s.running() {
 		t.Fatal("ожидание без конца")
+	}
+}
+
+func TestCrewPageDoesNotWaitForStats(t *testing.T) {
+	f := newFixture(t)
+	w := f.do(http.MethodGet, "/crew", nil, "", true)
+	if w.Code != http.StatusOK || f.docker.stats.Load() != 0 {
+		t.Fatalf("страница: %d, замеров Docker: %d", w.Code, f.docker.stats.Load())
+	}
+	if !strings.Contains(w.Body.String(), `data-res="budget-bot"`) {
+		t.Fatal("нет места под CPU и память budget-bot")
+	}
+
+	w = f.do(http.MethodGet, "/api/crew/stats", nil, "", true)
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("ответ %d: %s", w.Code, w.Body.String())
+	}
+	// Остановленный jellyfin и чужой stranger не замеряются.
+	want := map[string]string{"budget-bot": "1,5 % · 64 МБ", "panel": "1,5 % · 64 МБ"}
+	if len(got) != len(want) || got["budget-bot"] != want["budget-bot"] || got["panel"] != want["panel"] {
+		t.Fatalf("замеры: %v", got)
+	}
+	if w := f.do(http.MethodGet, "/api/crew/stats", nil, "", false); w.Code != http.StatusUnauthorized {
+		t.Fatalf("без входа: %d", w.Code)
 	}
 }

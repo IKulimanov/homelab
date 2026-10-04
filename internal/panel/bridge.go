@@ -113,7 +113,7 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 		v.Range = 30
 	}
 
-	cards, err := s.crewCards(ctx, false)
+	cards, err := s.crewCards(ctx)
 	if err != nil {
 		v.Problems = append(v.Problems, problem{Level: "bad", Title: "Docker", Text: "не отвечает: " + err.Error()})
 	}
