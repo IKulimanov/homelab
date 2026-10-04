@@ -32,23 +32,24 @@ func (s *Service) snapshot() host.Snapshot {
 func (s *Service) cmdStats(ctx context.Context) Reply {
 	snap := s.snapshot()
 	var b strings.Builder
-	fmt.Fprintf(&b, "CPU: %s, загрузка %s\n", num(snap.CPUTemp, "%.0f °C"), num(snap.CPUBusyPct, "%.0f %%"))
-	fmt.Fprintf(&b, "Load: %s / %s / %s, ядер %d\n", num(snap.Load1, "%.2f"), num(snap.Load5, "%.2f"), num(snap.Load15, "%.2f"), snap.CPUs)
-	fmt.Fprintf(&b, "SSD: %s\n", num(snap.SSDTemp, "%.0f °C"))
-	fmt.Fprintf(&b, "RAM: %s, swap %s\n", num(snap.MemPct, "%.0f %%"), num(snap.SwapPct, "%.0f %%"))
+	b.WriteString("📊 Сервер сейчас\n\n")
+	fmt.Fprintf(&b, "🌡 CPU: %s, загрузка %s\n", num(snap.CPUTemp, "%.0f °C"), num(snap.CPUBusyPct, "%.0f %%"))
+	fmt.Fprintf(&b, "🌡 SSD: %s\n", num(snap.SSDTemp, "%.0f °C"))
+	fmt.Fprintf(&b, "🏋️ Нагрузка: %s / %s / %s (1, 5, 15 мин), ядер %d\n", num(snap.Load1, "%.2f"), num(snap.Load5, "%.2f"), num(snap.Load15, "%.2f"), snap.CPUs)
+	fmt.Fprintf(&b, "🧠 Память: %s, swap %s\n", num(snap.MemPct, "%.0f %%"), num(snap.SwapPct, "%.0f %%"))
 	for _, d := range snap.Disks {
-		fmt.Fprintf(&b, "Диск %s: %.0f %%, свободно %s\n", d.Path, d.UsedPct, bytesHuman(d.Free))
+		fmt.Fprintf(&b, "💾 Диск %s: занят на %.0f %%, свободно %s\n", d.Path, d.UsedPct, bytesHuman(d.Free))
 	}
 	if snap.Battery != nil {
-		fmt.Fprintf(&b, "Батарея: %.0f %%, %s\n", snap.Battery.Percent, batteryStatus(snap.Battery.Status))
+		fmt.Fprintf(&b, "🔋 Батарея: %.0f %%, %s\n", snap.Battery.Percent, batteryStatus(snap.Battery.Status))
 	}
 	if snap.Uptime > 0 {
-		fmt.Fprintf(&b, "Сервер работает %s\n", since(snap.Uptime))
+		fmt.Fprintf(&b, "⏱ Без перезагрузки %s\n", since(snap.Uptime))
 	}
 
 	now := s.now().In(s.cfg.Location)
 	if aggs, err := s.store.Aggregates(ctx, dayStart(now), now.Add(time.Minute)); err == nil && len(aggs) > 0 {
-		b.WriteString("\nЗа сегодня, мин / сред / макс:\n")
+		b.WriteString("\n📈 За сегодня, мин / сред / макс\n")
 		b.WriteString(aggLines(aggs))
 	}
 	return Reply{Text: strings.TrimSpace(b.String())}
@@ -99,23 +100,23 @@ func aggLines(aggs map[string]Agg) string {
 
 func (s *Service) cmdUsage(ctx context.Context) Reply {
 	if s.llm == nil {
-		return Reply{Text: "Шлюз LLM не настроен: нет LLM_ADMIN_TOKEN."}
+		return Reply{Text: "⚠️ Шлюз LLM не настроен: нет LLM_ADMIN_TOKEN."}
 	}
 	st, err := s.llm.Status(ctx)
 	if err != nil {
-		return Reply{Text: "Шлюз LLM не ответил: " + err.Error()}
+		return Reply{Text: "❌ Шлюз LLM не ответил: " + err.Error() + "\n👉 Лог: /logs llm-gateway"}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "LLM за %s\n", st.Month)
+	fmt.Fprintf(&b, "💸 Расход LLM за %s\n\n", st.Month)
 	for _, c := range st.Clients {
-		fmt.Fprintf(&b, "%s: $%.2f из $%.2f (%.0f %%)\n", c.Name, c.SpentUSD, c.LimitUSD, percent(c.SpentUSD, c.LimitUSD))
+		fmt.Fprintf(&b, "%s %s: $%.2f из $%.2f (%.0f %%)\n", usageIcon(percent(c.SpentUSD, c.LimitUSD)), c.Name, c.SpentUSD, c.LimitUSD, percent(c.SpentUSD, c.LimitUSD))
 	}
-	fmt.Fprintf(&b, "Всего: $%.2f из $%.2f (%.0f %%)\n", st.TotalSpentUSD, st.TotalLimitUSD, percent(st.TotalSpentUSD, st.TotalLimitUSD))
+	fmt.Fprintf(&b, "\nВсего: $%.2f из $%.2f (%.0f %%)\n", st.TotalSpentUSD, st.TotalLimitUSD, percent(st.TotalSpentUSD, st.TotalLimitUSD))
 	b.WriteString(balanceLine(st.Balance) + "\n")
 
 	now := s.now().In(s.cfg.Location)
 	if rows, err := s.llm.Usage(ctx, dayStart(now)); err == nil {
-		b.WriteString("\nСегодня:\n")
+		b.WriteString("\n📅 Сегодня\n")
 		if len(rows) == 0 {
 			b.WriteString("вызовов не было\n")
 		}
@@ -129,16 +130,27 @@ func (s *Service) cmdUsage(ctx context.Context) Reply {
 		}
 	}
 	if len(st.UnpricedModels) > 0 {
-		fmt.Fprintf(&b, "\nНет цены для: %s — расход по ним не считается.\n", strings.Join(st.UnpricedModels, ", "))
+		fmt.Fprintf(&b, "\n🏷 Нет цены для: %s — расход по ним не считается.\n", strings.Join(st.UnpricedModels, ", "))
 	}
 	return Reply{Text: strings.TrimSpace(b.String())}
 }
 
+// usageIcon — значок расхода к лимиту: до 80 % спокойно, дальше предупреждение, с 100 % запросы отклоняются.
+func usageIcon(p float64) string {
+	switch {
+	case p >= 100:
+		return "⛔"
+	case p >= 80:
+		return "⚠️"
+	}
+	return "🟢"
+}
+
 func balanceLine(b gateway.Balance) string {
 	if !b.Known {
-		return "Баланс не задан: /balance <остаток из AI Studio>"
+		return "💰 Баланс не задан: /balance <остаток из AI Studio>"
 	}
-	line := fmt.Sprintf("Баланс: ~$%.2f", b.USD)
+	line := fmt.Sprintf("💰 Баланс: ~$%.2f", b.USD)
 	if b.SetAt != nil {
 		line += fmt.Sprintf(" (сверка %s, после неё пополнено $%.2f, потрачено $%.2f)", b.SetAt.Format("02.01"), b.Topups, b.Spent)
 	}
@@ -147,31 +159,31 @@ func balanceLine(b gateway.Balance) string {
 
 func (s *Service) cmdLedger(ctx context.Context, kind string, args []string) Reply {
 	if s.llm == nil {
-		return Reply{Text: "Шлюз LLM не настроен: нет LLM_ADMIN_TOKEN."}
+		return Reply{Text: "⚠️ Шлюз LLM не настроен: нет LLM_ADMIN_TOKEN."}
 	}
 	if len(args) == 0 {
 		if kind == "topup" {
-			return Reply{Text: "Нужна сумма в долларах: /topup 10"}
+			return Reply{Text: "🤔 Сколько долларов? Например: /topup 10"}
 		}
 		st, err := s.llm.Status(ctx)
 		if err != nil {
-			return Reply{Text: "Шлюз LLM не ответил: " + err.Error()}
+			return Reply{Text: "❌ Шлюз LLM не ответил: " + err.Error()}
 		}
 		return Reply{Text: balanceLine(st.Balance)}
 	}
 	usd, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimPrefix(args[0], "$"), ",", "."), 64)
 	if err != nil || usd < 0 || (kind == "topup" && usd == 0) {
-		return Reply{Text: "Сумма — число в долларах, например 10 или 17.40"}
+		return Reply{Text: "🤔 Сумма — число в долларах, например 10 или 17.40"}
 	}
 	bal, err := s.llm.Ledger(ctx, kind, usd)
 	if err != nil {
-		return Reply{Text: "Не записано: " + err.Error()}
+		return Reply{Text: "❌ Не записал: " + err.Error()}
 	}
-	what := fmt.Sprintf("Пополнение $%.2f записано.", usd)
+	what := fmt.Sprintf("✅ Записал пополнение $%.2f.", usd)
 	if kind == "set" {
-		what = fmt.Sprintf("Баланс сверен: $%.2f.", usd)
+		what = fmt.Sprintf("✅ Сверил баланс: $%.2f.", usd)
 	}
-	return Reply{Text: what + " " + balanceLine(bal)}
+	return Reply{Text: what + "\n" + balanceLine(bal)}
 }
 
 func percent(v, limit float64) float64 {
@@ -225,27 +237,27 @@ func (sc Schedule) last(now time.Time) (time.Time, bool) {
 // weeklyReport — сводка за [from, to): метрики, падения контейнеров, LLM, активные алерты.
 func (s *Service) weeklyReport(ctx context.Context, from, to time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Отчёт за неделю %s–%s\n\n", from.Format("02.01"), to.Format("02.01"))
+	fmt.Fprintf(&b, "📊 Отчёт за неделю %s–%s\n\n", from.Format("02.01"), to.Format("02.01"))
 
 	if aggs, err := s.store.Aggregates(ctx, from, to); err == nil && len(aggs) > 0 {
-		b.WriteString("Мин / сред / макс:\n" + aggLines(aggs))
+		b.WriteString("📈 Мин / сред / макс\n" + aggLines(aggs))
 	} else {
-		b.WriteString("Замеров за неделю нет.\n")
+		b.WriteString("📈 Замеров за неделю нет.\n")
 	}
 
 	falls, err := s.store.Falls(ctx, from, to)
 	switch {
 	case err != nil:
-		fmt.Fprintf(&b, "\nПадения: не прочитаны (%v)\n", err)
+		fmt.Fprintf(&b, "\n💀 Падения не прочитаны: %v\n", err)
 	case len(falls) == 0:
-		b.WriteString("\nПадений контейнеров не было.\n")
+		b.WriteString("\n✅ Падений контейнеров не было.\n")
 	default:
 		names := make([]string, 0, len(falls))
 		for n := range falls {
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		b.WriteString("\nПадения: ")
+		b.WriteString("\n💀 Падения: ")
 		for i, n := range names {
 			if i > 0 {
 				b.WriteString(", ")
@@ -263,15 +275,12 @@ func (s *Service) weeklyReport(ctx context.Context, from, to time.Time) string {
 					week += r.CostUSD
 				}
 			}
-			fmt.Fprintf(&b, "\nLLM: за неделю $%.2f, за месяц $%.2f из $%.2f. %s\n", week, st.TotalSpentUSD, st.TotalLimitUSD, balanceLine(st.Balance))
+			fmt.Fprintf(&b, "\n💸 LLM: за неделю $%.2f, за месяц $%.2f из $%.2f\n%s\n", week, st.TotalSpentUSD, st.TotalLimitUSD, balanceLine(st.Balance))
 		}
 	}
 
 	if active := s.alerts.Active(); len(active) > 0 {
-		b.WriteString("\nАктивные алерты:\n")
-		for _, a := range active {
-			fmt.Fprintf(&b, "- %s: %s\n", a.Level, a.Text)
-		}
+		b.WriteString("\n🚨 Что сломано сейчас\n" + activeLines(active))
 	}
 	return strings.TrimSpace(b.String())
 }

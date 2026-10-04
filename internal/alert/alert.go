@@ -27,6 +27,18 @@ func (l Level) String() string {
 	}
 }
 
+// Icon — значок уровня в начале сообщения: по нему беду видно, не читая текст.
+func (l Level) Icon() string {
+	switch l {
+	case Warn:
+		return "⚠️"
+	case Crit:
+		return "🚨"
+	default:
+		return "✅"
+	}
+}
+
 // High — уровень для метрики, где больше значит хуже (температура, память).
 func High(v, warn, crit float64) Level {
 	switch {
@@ -100,17 +112,17 @@ func (e *Engine) Update(key string, level Level, text string) Msg {
 			return Msg{}
 		}
 		delete(e.state, key)
-		return Msg{Text: "Восстановилось: " + text, Kind: Recovered, Level: OK}
+		return Msg{Text: OK.Icon() + " Восстановилось: " + text, Kind: Recovered, Level: OK}
 	}
 	if !active {
 		e.state[key] = &state{level: level, sent: now, text: text}
-		return Msg{Text: level.String() + ": " + text, Kind: New, Level: level}
+		return Msg{Text: level.Icon() + " " + level.String() + ": " + text, Kind: New, Level: level}
 	}
 	st.text = text
 	switch {
 	case level > st.level:
 		st.level, st.sent = level, now
-		return Msg{Text: level.String() + ": " + text, Kind: Worse, Level: level}
+		return Msg{Text: level.Icon() + " " + level.String() + ": " + text, Kind: Worse, Level: level}
 	case level < st.level:
 		// Стало легче, но не норма: молча понижаем, чтобы следующее ухудшение пришло сразу.
 		st.level = level
@@ -118,7 +130,7 @@ func (e *Engine) Update(key string, level Level, text string) Msg {
 	case level == Crit && now.Sub(st.sent) >= e.Cooldown:
 		st.sent = now
 		st.repeats++
-		return Msg{Text: level.String() + ", всё ещё: " + text, Kind: Repeat, Level: level, Repeat: st.repeats}
+		return Msg{Text: level.Icon() + " " + level.String() + ", всё ещё: " + text, Kind: Repeat, Level: level, Repeat: st.repeats}
 	}
 	return Msg{}
 }

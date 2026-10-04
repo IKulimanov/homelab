@@ -126,6 +126,9 @@ type Service struct {
 	images map[string]string    // id образа → версия; образы не меняются, кэш вечный
 	last   host.Snapshot
 	ticks  int
+	// lastGIF — последняя присланная GIF: её сохраняет кнопка события или /gif без ответа на сообщение.
+	// Только в памяти: после перезапуска бота GIF просто присылают ещё раз.
+	lastGIF string
 }
 
 type Deps struct {
@@ -222,6 +225,13 @@ func (s *Service) enabled(cat string) bool {
 // gifEvents — события, к которым можно привязать GIF командой /gif.
 var gifEvents = []string{"temp", "disk", "died", "recovered", "update-ok", "update-fail", "llm-limit", "balance", "report", "backup-fail"}
 
+// gifLabels — подписи кнопок выбора события для GIF.
+var gifLabels = map[string]string{
+	"temp": "🔥 Перегрев", "disk": "💾 Мало места", "died": "💀 Сервис упал", "recovered": "🎉 Починилось",
+	"update-ok": "🚀 Обновление", "update-fail": "💥 Обновление сломалось", "llm-limit": "💸 Лимит LLM",
+	"balance": "💰 Баланс Gemini", "report": "📊 Отчёт за неделю", "backup-fail": "🧊 Бэкап не сделан",
+}
+
 // gifEvent — общий GIF для близких событий: любая остановка сервиса — «died».
 func gifEvent(event string) string {
 	switch event {
@@ -231,11 +241,21 @@ func gifEvent(event string) string {
 	return event
 }
 
+// activeLines — активные алерты списком: значок уровня и первая строка, без совета «что делать».
+func activeLines(active []alert.Active) string {
+	var b strings.Builder
+	for _, a := range active {
+		first, _, _ := strings.Cut(a.Text, "\n")
+		fmt.Fprintf(&b, "%s %s\n", a.Level.Icon(), first)
+	}
+	return b.String()
+}
+
 func withLine(text, line string) string {
 	if line == "" {
 		return text
 	}
-	return text + "\n\n" + line
+	return text + "\n\n🤖 " + line
 }
 
 // say — ответ на команду с фразой персонажа.

@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -111,7 +113,7 @@ func run(log *slog.Logger) error {
 
 	var svc *ops.Service
 	b, err := bot.New(token,
-		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, u *models.Update) { handle(ctx, b, u, svc, log) }),
+		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, u *models.Update) { handle(ctx, b, u, svc, chatID, log) }),
 		bot.WithAllowedUpdates(bot.AllowedUpdates{"message", "callback_query"}),
 	)
 	if err != nil {
@@ -160,11 +162,29 @@ var commands = []models.BotCommand{
 	{Command: "panel", Description: "ссылка входа в панель"},
 }
 
-func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service, log *slog.Logger) {
+func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service, ownChat int64, log *slog.Logger) {
 	switch {
 	case u.Message != nil:
-		for _, r := range svc.HandleMessage(ctx, incoming(u.Message)) {
-			reply(ctx, b, u.Message.Chat.ID, r, log)
+		m := u.Message
+		in := ops.Incoming{ChatID: m.Chat.ID, Text: m.Text}
+		if in.Text == "" {
+			in.Text = m.Caption
+		}
+		// Чужой чат ops.Service проигнорирует сам; файл из него не скачивается и не отправляется.
+		if id, anim := gifOf(m); id != "" && m.Chat.ID == ownChat && ops.AboutGIF(in.Text) {
+			if !anim {
+				var err error
+				if id, err = asAnimation(ctx, b, ownChat, id); err != nil {
+					log.Warn("GIF не перезалита анимацией", "err", err)
+					reply(ctx, b, ownChat, ops.Reply{Text: "⚠️ Не смог превратить файл в GIF: " + err.Error() +
+						"\nПопробуй прислать GIF без галочки «Отправить как файл»."}, log)
+					return
+				}
+			}
+			in.GIF = id
+		}
+		for _, r := range svc.HandleMessage(ctx, in) {
+			reply(ctx, b, m.Chat.ID, r, log)
 		}
 	case u.CallbackQuery != nil:
 		q := u.CallbackQuery
@@ -184,19 +204,73 @@ func handle(ctx context.Context, b *bot.Bot, u *models.Update, svc *ops.Service,
 	}
 }
 
-// incoming: команда — текст или подпись к GIF; GIF — из самого сообщения или из того, на которое ответили.
-func incoming(m *models.Message) ops.Incoming {
-	in := ops.Incoming{ChatID: m.Chat.ID, Text: m.Text}
-	if in.Text == "" {
-		in.Text = m.Caption
+// gifOf — GIF из сообщения или из того, на которое ответили. anim=false: GIF пришла файлом или видео.
+// file_id такого файла sendAnimation не принимает, его нужно перезалить анимацией.
+func gifOf(m *models.Message) (fileID string, anim bool) {
+	for _, msg := range []*models.Message{m, m.ReplyToMessage} {
+		switch {
+		case msg == nil:
+		case msg.Animation != nil:
+			return msg.Animation.FileID, true
+		case msg.Document != nil && (msg.Document.MimeType == "image/gif" || msg.Document.MimeType == "video/mp4"):
+			return msg.Document.FileID, false
+		case msg.Video != nil:
+			return msg.Video.FileID, false
+		}
 	}
-	switch {
-	case m.Animation != nil:
-		in.GIF = m.Animation.FileID
-	case m.ReplyToMessage != nil && m.ReplyToMessage.Animation != nil:
-		in.GIF = m.ReplyToMessage.Animation.FileID
+	return "", false
+}
+
+// maxGIFBytes — больше Bot API скачать не даёт.
+const maxGIFBytes = 20 << 20
+
+// asAnimation скачивает файл и отправляет его в чат анимацией, чтобы получить file_id анимации.
+// Служебное сообщение с копией сразу удаляется: file_id остаётся рабочим.
+func asAnimation(ctx context.Context, b *bot.Bot, chatID int64, fileID string) (string, error) {
+	f, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+	if err != nil {
+		return "", fmt.Errorf("Telegram не отдал файл: %w", err)
 	}
-	return in
+	if f.FileSize > maxGIFBytes {
+		return "", errors.New("файл больше 20 МБ")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(f), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
+	if err != nil {
+		// В адресе скачивания токен бота: в текст ошибки и в лог он попасть не должен.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return "", fmt.Errorf("файл не скачался: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("файл не скачался: HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGIFBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("файл не скачался: %w", err)
+	}
+	name := "bender.mp4"
+	if strings.HasSuffix(strings.ToLower(f.FilePath), ".gif") {
+		name = "bender.gif"
+	}
+	msg, err := b.SendAnimation(ctx, &bot.SendAnimationParams{
+		ChatID: chatID, Animation: &models.InputFileUpload{Filename: name, Data: bytes.NewReader(data)},
+		DisableNotification: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("Telegram не принял анимацию: %w", err)
+	}
+	_, _ = b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msg.ID})
+	if msg.Animation == nil {
+		return "", errors.New("Telegram сделал из файла видео, а не GIF: нужен ролик без звука")
+	}
+	return msg.Animation.FileID, nil
 }
 
 func reply(ctx context.Context, b *bot.Bot, chatID int64, r ops.Reply, log *slog.Logger) {

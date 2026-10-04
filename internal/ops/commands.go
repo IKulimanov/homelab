@@ -22,21 +22,30 @@ const (
 	maxText = 3500
 )
 
-const help = `Команды:
-/status — сервисы, версии, активные алерты
-/stats — температура, память, диски, батарея; мин/макс за день
+const help = `🤖 Что я умею
+
+📋 Состояние
+/status — сервисы, версии, что сломано
+/stats — температура, память, диски
 /logs <сервис> [строк] — последние строки лога, по умолчанию 50
+
+🔧 Управление
 /restart <сервис> — перезапустить
-/stop <сервис> — остановить, с подтверждением
+/stop <сервис> — остановить, спрошу подтверждение
 /start <сервис> — запустить остановленный
 /update — проверить обновления сейчас
-/usage — расход LLM за месяц и за сегодня
+
+💸 LLM
+/usage — расход за месяц и за сегодня
 /topup <сумма> — записать пополнение Gemini в долларах
 /balance [сумма] — остаток; с суммой — сверка с AI Studio
-/gif <событие> — ответом на GIF: показывать её при событии; /gif — список
+
+🎬 Прочее
+/gif — GIF по событиям; добавить — просто пришли GIF
 /panel — ссылка входа в панель «Планета Экспресс»`
 
-// Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили.
+// Incoming — сообщение из чата. GIF — file_id анимации из самого сообщения или из того, на которое ответили;
+// GIF файлом или видео ops-bot заранее перезаливает анимацией.
 type Incoming struct {
 	ChatID int64
 	Text   string
@@ -55,6 +64,11 @@ func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
 		return nil
 	}
 	cmd, args := parseCommand(in.Text)
+	if in.GIF != "" {
+		s.mu.Lock()
+		s.lastGIF = in.GIF
+		s.mu.Unlock()
+	}
 	var r Reply
 	switch cmd {
 	case "status":
@@ -85,23 +99,39 @@ func (s *Service) HandleMessage(ctx context.Context, in Incoming) []Reply {
 		r = s.cmdGIF(ctx, args, in.GIF)
 	case "panel":
 		r = s.cmdPanel(ctx)
+	case "":
+		if in.GIF != "" {
+			r = Reply{Text: "🎬 GIF получил. Когда её показывать?", Buttons: gifButtons()}
+			break
+		}
+		r = Reply{Text: s.say(help, "help", "")}
 	default:
 		r = Reply{Text: s.say(help, "help", "")}
 	}
 	return []Reply{r}
 }
 
-// Callback — нажатие кнопки: подтверждение остановки.
+// Callback — нажатие кнопки: подтверждение остановки или выбор события для GIF.
 func (s *Service) Callback(ctx context.Context, chatID int64, data string) []Reply {
 	if chatID != s.cfg.ChatID {
 		s.log.Warn("кнопка из чужого чата проигнорирована", "chat_id", chatID)
 		return nil
 	}
+	if event, ok := strings.CutPrefix(data, "gif:"); ok {
+		return []Reply{s.cmdGIF(ctx, []string{event}, "")}
+	}
 	name, ok := strings.CutPrefix(data, "stop:")
 	if !ok {
-		return []Reply{{Text: "Отменено."}}
+		return []Reply{{Text: "👌 Отменил."}}
 	}
 	return []Reply{s.withContainer(ctx, []string{name}, s.stop)}
+}
+
+// AboutGIF — сообщение с GIF относится к GIF: подписи нет, она не команда или это команда /gif.
+// Ответ «/logs budget-bot» на сообщение с GIF к ней не относится.
+func AboutGIF(text string) bool {
+	cmd, _ := parseCommand(text)
+	return cmd == "" || cmd == "gif"
 }
 
 // parseCommand: «/logs@ops_bot budget-bot 100» → «logs», [budget-bot 100].
@@ -133,19 +163,19 @@ func (s *Service) find(ctx context.Context, name string) (docker.Container, erro
 			return c, nil
 		}
 	}
-	return docker.Container{}, fmt.Errorf("%s %w; список — /status", name, errNotFound)
+	return docker.Container{}, fmt.Errorf("%s %w. Список сервисов — /status", name, errNotFound)
 }
 
 func (s *Service) withContainer(ctx context.Context, args []string, fn func(context.Context, docker.Container) Reply) Reply {
 	if len(args) == 0 {
-		return Reply{Text: "Нужно имя сервиса, например: /restart budget-bot"}
+		return Reply{Text: "🤔 Какой сервис? Например: /restart budget-bot. Список — /status"}
 	}
 	c, err := s.find(ctx, args[0])
 	if errors.Is(err, errForeign) {
-		return Reply{Text: s.say(err.Error(), "cmd-denied", args[0])}
+		return Reply{Text: s.say("🙅 "+err.Error(), "cmd-denied", args[0])}
 	}
 	if err != nil {
-		return Reply{Text: err.Error()}
+		return Reply{Text: "🤔 " + err.Error()}
 	}
 	return fn(ctx, c)
 }
@@ -159,48 +189,48 @@ func (s *Service) markKill(name string) {
 func (s *Service) restart(ctx context.Context, c docker.Container) Reply {
 	s.markKill(c.Name())
 	if err := s.docker.Restart(ctx, c.ID); err != nil {
-		return Reply{Text: fmt.Sprintf("%s не перезапущен: %v", c.Name(), err)}
+		return Reply{Text: fmt.Sprintf("❌ %s не перезапустился: %v", c.Name(), err)}
 	}
-	return Reply{Text: s.say(c.Name()+" перезапущен. Лог: /logs "+c.Name(), "cmd-restart", c.Name())}
+	return Reply{Text: s.say("🔄 "+c.Name()+" перезапущен.\n👉 Проверить: /logs "+c.Name(), "cmd-restart", c.Name())}
 }
 
 func (s *Service) start(ctx context.Context, c docker.Container) Reply {
 	if err := s.docker.Start(ctx, c.ID); err != nil {
-		return Reply{Text: fmt.Sprintf("%s не запущен: %v", c.Name(), err)}
+		return Reply{Text: fmt.Sprintf("❌ %s не запустился: %v", c.Name(), err)}
 	}
-	return Reply{Text: s.say(c.Name()+" запущен.", "cmd-start", c.Name())}
+	return Reply{Text: s.say("▶️ "+c.Name()+" запущен.\n👉 Проверить: /logs "+c.Name(), "cmd-start", c.Name())}
 }
 
 func (s *Service) askStop(_ context.Context, c docker.Container) Reply {
 	if slices.Contains(s.cfg.Protected, c.Name()) {
-		return Reply{Text: c.Name() + " из чата не останавливается: после этого бот не сможет его запустить."}
+		return Reply{Text: "🙅 " + c.Name() + " из чата не останавливается: потом я не смогу его запустить."}
 	}
 	return Reply{
-		Text:    s.say("Остановить "+c.Name()+"? Пока он остановлен, обновления его не запускают.", "cmd-stop-ask", c.Name()),
-		Buttons: [][]Button{{{Text: "Вырубай", Data: "stop:" + c.Name()}, {Text: "Отставить", Data: "cancel"}}},
+		Text:    s.say("⏹ Остановить "+c.Name()+"?\nПока он стоит, обновления его не запускают.", "cmd-stop-ask", c.Name()),
+		Buttons: [][]Button{{{Text: "⏹ Вырубай", Data: "stop:" + c.Name()}, {Text: "↩️ Отставить", Data: "cancel"}}},
 	}
 }
 
 func (s *Service) stop(ctx context.Context, c docker.Container) Reply {
 	if slices.Contains(s.cfg.Protected, c.Name()) {
-		return Reply{Text: c.Name() + " из чата не останавливается."}
+		return Reply{Text: "🙅 " + c.Name() + " из чата не останавливается."}
 	}
 	s.markKill(c.Name())
 	if err := s.docker.Stop(ctx, c.ID); err != nil {
-		return Reply{Text: fmt.Sprintf("%s не остановлен: %v", c.Name(), err)}
+		return Reply{Text: fmt.Sprintf("❌ %s не остановился: %v", c.Name(), err)}
 	}
-	return Reply{Text: s.say(c.Name()+" остановлен. Запустить: /start "+c.Name(), "cmd-stopped", c.Name())}
+	return Reply{Text: s.say("⏹ "+c.Name()+" остановлен.\n👉 Запустить снова: /start "+c.Name(), "cmd-stopped", c.Name())}
 }
 
 func (s *Service) cmdLogs(ctx context.Context, args []string) Reply {
 	if len(args) == 0 {
-		return Reply{Text: "Нужно имя сервиса: /logs budget-bot [строк]"}
+		return Reply{Text: "🤔 Чей лог? Например: /logs budget-bot 100"}
 	}
 	lines := defaultLogLines
 	if len(args) > 1 {
 		n, err := strconv.Atoi(args[1])
 		if err != nil || n < 1 {
-			return Reply{Text: "Число строк — целое больше нуля."}
+			return Reply{Text: "🤔 Число строк — целое больше нуля, например: /logs budget-bot 100"}
 		}
 		lines = min(n, maxLogLines)
 	}
@@ -214,58 +244,54 @@ func (s *Service) cmdLogs(ctx context.Context, args []string) Reply {
 	}
 	data, err := s.docker.Logs(ctx, c.ID, lines, insp.Config.Tty)
 	if err != nil {
-		return Reply{Text: fmt.Sprintf("Лог %s не прочитан: %v", c.Name(), err)}
+		return Reply{Text: fmt.Sprintf("❌ Лог %s не прочитан: %v", c.Name(), err)}
 	}
 	text := strings.TrimSpace(string(data))
 	if text == "" {
-		return Reply{Text: "Лог " + c.Name() + " пуст."}
+		return Reply{Text: "📭 Лог " + c.Name() + " пуст."}
 	}
 	if utf8.RuneCountInString(text) > maxText {
 		return Reply{
-			Text: fmt.Sprintf("%s, последние %d строк — файлом.", c.Name(), lines),
+			Text: fmt.Sprintf("📄 %s, последние %d строк — файлом.", c.Name(), lines),
 			File: &File{Name: c.Name() + ".log", Data: data},
 		}
 	}
-	return Reply{Text: c.Name() + ":\n" + text}
+	return Reply{Text: "📄 " + c.Name() + ":\n" + text}
 }
 
 // cmdUpdate кладёт файл-триггер; homelab-update.path на хосте видит его и запускает update.sh all.
 func (s *Service) cmdUpdate() Reply {
 	if s.cfg.TriggerPath == "" {
-		return Reply{Text: "Триггер обновления не настроен (OPS_TRIGGER)."}
+		return Reply{Text: "⚠️ Не знаю, как запустить обновление: не задан OPS_TRIGGER."}
 	}
 	if err := os.WriteFile(s.cfg.TriggerPath, []byte(s.now().Format(time.RFC3339)+"\n"), 0o644); err != nil {
-		return Reply{Text: "Не удалось запустить обновление: " + err.Error()}
+		return Reply{Text: "❌ Не запустил обновление: " + err.Error()}
 	}
-	return Reply{Text: s.say("Проверка обновлений запущена. Если что-то обновится, итог придёт отдельным сообщением.", "cmd-update", "")}
+	return Reply{Text: s.say("🔍 Проверяю обновления. Если что-то обновится, итог придёт отдельным сообщением.", "cmd-update", "")}
 }
 
 func (s *Service) cmdPanel(ctx context.Context) Reply {
 	if s.panel == nil {
-		return Reply{Text: "Панель не настроена: нужен PANEL_TOKEN в /srv/secrets/homelab.env."}
+		return Reply{Text: "⚠️ Панель не настроена: нужен PANEL_TOKEN в /srv/secrets/homelab.env."}
 	}
 	link, err := s.panel(ctx)
 	if err != nil {
 		s.log.Warn("ссылка входа в панель", "err", err)
-		return Reply{Text: "Панель не ответила: " + err.Error()}
+		return Reply{Text: "❌ Панель не ответила: " + err.Error() + "\n👉 Лог: /logs panel"}
 	}
-	return Reply{Text: "Вход в штаб, ссылка живёт 5 минут и работает один раз:\n" + link, NoPreview: true}
+	return Reply{Text: "🚀 Вход в «Планету Экспресс»\nСсылка работает один раз и живёт 5 минут:\n" + link, NoPreview: true}
 }
 
 func (s *Service) cmdStatus(ctx context.Context) Reply {
 	list, err := s.docker.List(ctx)
 	if err != nil {
-		return Reply{Text: "Docker не ответил: " + err.Error()}
+		return Reply{Text: "❌ Docker не ответил: " + err.Error()}
 	}
 	var b strings.Builder
 	active := s.alerts.Active()
 	allRunning := true
 	if len(active) > 0 {
-		b.WriteString("Активные алерты:\n")
-		for _, a := range active {
-			fmt.Fprintf(&b, "- %s: %s\n", a.Level, a.Text)
-		}
-		b.WriteString("\n")
+		b.WriteString("🚨 Что сломано\n" + activeLines(active) + "\n")
 	}
 
 	byProject := map[string][]docker.Container{}
@@ -280,14 +306,16 @@ func (s *Service) cmdStatus(ctx context.Context) Reply {
 			continue
 		}
 		sort.Slice(cs, func(i, j int) bool { return cs[i].Name() < cs[j].Name() })
-		b.WriteString(p + "\n")
+		b.WriteString("📦 " + p + "\n")
 		for _, c := range cs {
-			fmt.Fprintf(&b, "  %s — %s, %s\n", c.Name(), s.stateLine(ctx, c), s.version(ctx, c))
+			icon, line := s.stateLine(ctx, c)
+			fmt.Fprintf(&b, "%s %s — %s · %s\n", icon, c.Name(), line, s.version(ctx, c))
 			allRunning = allRunning && c.State == "running"
 		}
+		b.WriteString("\n")
 	}
 	if b.Len() == 0 {
-		return Reply{Text: "Контейнеров homelab нет."}
+		return Reply{Text: "📭 Контейнеров homelab нет."}
 	}
 	event := "status-bad"
 	if allRunning && len(active) == 0 {
@@ -296,61 +324,86 @@ func (s *Service) cmdStatus(ctx context.Context) Reply {
 	return Reply{Text: s.say(strings.TrimSpace(b.String()), event, "")}
 }
 
-func (s *Service) stateLine(ctx context.Context, c docker.Container) string {
+// stateLine — значок и состояние контейнера: ✅ работает, 🤒 работает, но проверка здоровья не проходит,
+// 🔁 перезапускается по кругу, ⏹ остановлен.
+func (s *Service) stateLine(ctx context.Context, c docker.Container) (string, string) {
 	insp, err := s.docker.Inspect(ctx, c.ID)
 	if err != nil {
-		return c.State
+		return "❔", c.State
 	}
 	switch {
 	case insp.State.Restarting:
-		return fmt.Sprintf("перезапускается (перезапусков %d)", insp.RestartCount)
+		return "🔁", fmt.Sprintf("перезапускается по кругу (уже %d раз)", insp.RestartCount)
 	case insp.State.Running:
 		line := "работает " + since(s.now().Sub(insp.State.StartedAt))
-		if h := insp.Health(); h != "" {
-			line += ", " + h
+		switch insp.Health() {
+		case "unhealthy":
+			return "🤒", line + ", проверка здоровья не проходит"
+		case "starting":
+			return "⏳", line + ", запускается"
 		}
-		return line
+		return "✅", line
 	default:
-		return fmt.Sprintf("остановлен %s назад, код %d", since(s.now().Sub(insp.State.FinishedAt)), insp.State.ExitCode)
+		return "⏹", fmt.Sprintf("остановлен %s назад, код %d", since(s.now().Sub(insp.State.FinishedAt)), insp.State.ExitCode)
 	}
 }
 
-// cmdGIF: «/gif temp» ответом на GIF — запомнить; «/gif» — список; «/gif clear temp» — забыть все GIF события.
+// cmdGIF: «/gif temp» — запомнить GIF из сообщения, из ответа или последнюю присланную; «/gif» — список;
+// «/gif clear temp» — забыть все GIF события.
 func (s *Service) cmdGIF(ctx context.Context, args []string, fileID string) Reply {
-	events := strings.Join(gifEvents, ", ")
 	if len(args) == 0 {
 		counts, err := s.store.GIFCounts(ctx)
 		if err != nil {
-			return Reply{Text: err.Error()}
+			return Reply{Text: "⚠️ Не прочитал список GIF: " + err.Error()}
 		}
 		var b strings.Builder
-		b.WriteString("GIF по событиям:\n")
+		b.WriteString("🎬 GIF по событиям\n\n")
 		for _, e := range gifEvents {
-			fmt.Fprintf(&b, "%s: %d\n", e, counts[e])
+			fmt.Fprintf(&b, "%s (%s): %d\n", gifLabels[e], e, counts[e])
 		}
-		b.WriteString("\nДобавить: ответь на GIF командой /gif <событие> или пришли GIF с такой подписью. Убрать: /gif clear <событие>")
+		b.WriteString("\n➕ Добавить: просто пришли GIF и выбери событие кнопкой.\n🗑 Убрать все GIF события: /gif clear <событие>")
 		return Reply{Text: b.String()}
 	}
+	events := strings.Join(gifEvents, ", ")
 	if args[0] == "clear" {
 		if len(args) < 2 || !slices.Contains(gifEvents, args[1]) {
-			return Reply{Text: "Какое событие очистить? " + events}
+			return Reply{Text: "🤔 Какое событие очистить? Есть: " + events}
 		}
 		n, err := s.store.ClearGIFs(ctx, args[1])
 		if err != nil {
-			return Reply{Text: err.Error()}
+			return Reply{Text: "⚠️ Не очистил: " + err.Error()}
 		}
-		return Reply{Text: fmt.Sprintf("%s: убрано GIF %d.", args[1], n)}
+		return Reply{Text: fmt.Sprintf("🗑 %s: убрал GIF — %d.", gifLabels[args[1]], n)}
 	}
 	event := args[0]
 	if !slices.Contains(gifEvents, event) {
-		return Reply{Text: "Нет такого события. Есть: " + events}
+		return Reply{Text: "🤔 Нет такого события. Есть: " + events}
 	}
 	if fileID == "" {
-		return Reply{Text: "Нужна GIF: ответь командой /gif " + event + " на сообщение с GIF или пришли GIF с этой подписью."}
+		s.mu.Lock()
+		fileID = s.lastGIF
+		s.mu.Unlock()
+	}
+	if fileID == "" {
+		return Reply{Text: "🎬 Не вижу GIF. Пришли её ещё раз — и выбери событие кнопкой."}
 	}
 	if err := s.store.AddGIF(ctx, event, fileID); err != nil {
-		return Reply{Text: err.Error()}
+		return Reply{Text: "⚠️ GIF не сохранилась: " + err.Error()}
 	}
 	ids, _ := s.store.GIFs(ctx, event)
-	return Reply{Text: fmt.Sprintf("Запомнил для %s, всего %d.", event, len(ids))}
+	return Reply{Text: fmt.Sprintf("✅ Запомнил для «%s». GIF у события: %d.", gifLabels[event], len(ids))}
+}
+
+// gifButtons — кнопки выбора события, по две в ряд.
+func gifButtons() [][]Button {
+	var rows [][]Button
+	for i, e := range gifEvents {
+		b := Button{Text: gifLabels[e], Data: "gif:" + e}
+		if i%2 == 0 {
+			rows = append(rows, []Button{b})
+		} else {
+			rows[len(rows)-1] = append(rows[len(rows)-1], b)
+		}
+	}
+	return rows
 }

@@ -19,15 +19,15 @@ func TestEngineCooldownEscalationAndRecovery(t *testing.T) {
 		}
 	}
 
-	step(0, OK, "")                        // норма без беды — тишина
-	step(0, Warn, "Внимание:")             // первая беда — сразу
-	step(time.Minute, Warn, "")            // повтор раньше cooldown — тишина
-	step(10*time.Minute, Crit, "Критично") // ухудшение — сразу, несмотря на cooldown
-	step(10*time.Minute, Warn, "")         // полегчало, но не норма — тишина
-	step(10*time.Minute, Crit, "Критично") // снова хуже — сразу
+	step(0, OK, "")                          // норма без беды — тишина
+	step(0, Warn, "⚠️ Внимание:")            // первая беда — сразу
+	step(time.Minute, Warn, "")              // повтор раньше cooldown — тишина
+	step(10*time.Minute, Crit, "🚨 Критично") // ухудшение — сразу, несмотря на cooldown
+	step(10*time.Minute, Warn, "")           // полегчало, но не норма — тишина
+	step(10*time.Minute, Crit, "🚨 Критично") // снова хуже — сразу
 	step(29*time.Minute, Crit, "")
-	step(time.Minute, Crit, "Критично, всё ещё") // прошло 30 минут — напоминание
-	step(time.Minute, OK, "Восстановилось")
+	step(time.Minute, Crit, "🚨 Критично, всё ещё") // прошло 30 минут — напоминание
+	step(time.Minute, OK, "✅ Восстановилось")
 	step(time.Minute, OK, "") // «восстановилось» — один раз
 }
 

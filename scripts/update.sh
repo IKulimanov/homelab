@@ -81,11 +81,19 @@ want_hash() {
   compose "$1" "$2" config --hash "$3" | awk '{print $2}'
 }
 
+# Цель сервиса — «id образа-хэш конфигурации», которую update.sh поставил или застал последней. Сравнение идёт
+# с ней, а не с меткой контейнера: метка com.docker.compose.config-hash и .Image контейнера не всегда совпадают
+# с тем, что печатают config --hash и image inspect (зависит от версии compose и хранилища образов). Тогда
+# сервис считался бы изменённым на каждом прогоне: копия базы и сообщение «обновлено» каждые 5 минут.
+APPLIED_DIR="$STATE_DIR/applied"
+applied_get() { cat "$APPLIED_DIR/$1-$2" 2>/dev/null || true; }
+applied_set() { mkdir -p "$APPLIED_DIR" && echo "$3" >"$APPLIED_DIR/$1-$2"; }
+
 # changed_services STACK ENV — сервисы, у которых запущен контейнер и он отличается от нужного:
 # другой образ (вышла новая версия, сменился тег) или другая конфигурация (правка compose.yaml, секретов).
 # Печатает строки «сервис цель причина», где цель — образ и хэш конфигурации, на которые нужно перейти.
 changed_services() {
-  local stack=$1 env_file=$2 model svc cid want_image want_id have_id want have reason
+  local stack=$1 env_file=$2 model svc cid want_image want_id have_id want have target applied reason
   # Образ берётся из полной модели: config --images с именем сервиса печатает и образы его зависимостей.
   model=$(compose "$stack" "$env_file" config --format json)
   for svc in $(jq -r '.services | keys[]' <<<"$model"); do
@@ -93,14 +101,34 @@ changed_services() {
     [[ -n "$cid" ]] || continue
     want_image=$(jq -r --arg s "$svc" '.services[$s].image' <<<"$model")
     want_id=$(docker image inspect -f '{{.Id}}' "$want_image" 2>/dev/null || true)
-    have_id=$(docker inspect -f '{{.Image}}' "$cid")
+    want_id=${want_id#sha256:}
     want=$(want_hash "$stack" "$env_file" "$svc")
-    have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+    target="$want_id-$want"
+    applied=$(applied_get "$stack" "$svc")
     reason=""
-    [[ -n "$want_id" && "$want_id" != "$have_id" ]] && reason=image
-    [[ "$want" != "$have" ]] && reason=${reason:+$reason+}config
-    [[ -z "$reason" ]] || echo "$svc ${want_id#sha256:}-$want $reason"
+    if [[ -n "$applied" ]]; then
+      [[ "$applied" == "$target" ]] && continue
+      [[ -n "$want_id" && "${applied%-*}" != "$want_id" ]] && reason=image
+      [[ "${applied##*-}" != "$want" ]] && reason=${reason:+$reason+}config
+    else
+      # Первый прогон после установки: записанной цели ещё нет, сравнение с самим контейнером.
+      have_id=$(docker inspect -f '{{.Image}}' "$cid")
+      have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+      [[ -n "$want_id" && "$want_id" != "${have_id#sha256:}" ]] && reason=image
+      [[ "$want" != "$have" ]] && reason=${reason:+$reason+}config
+      [[ -n "$reason" ]] || applied_set "$stack" "$svc" "$target"
+    fi
+    [[ -z "$reason" ]] || echo "$svc $target $reason"
   done
+}
+
+# done_line SVC FROM TO — строка отчёта об успешном обновлении. Версия та же — значит, применились настройки.
+done_line() {
+  if [[ "$2" == "$3" ]]; then
+    echo "✅ $1: применил новые настройки (версия $3)"
+  else
+    echo "✅ $1: новая версия $3 (была $2)"
+  fi
 }
 
 # has_db SVC — есть ли у сервиса база, которую нужно сохранить до обновления.
@@ -113,13 +141,19 @@ verify() {
   local stack=$1 env_file=$2 svc=$3 cid state
   cid=$(compose "$stack" "$env_file" ps -q "$svc")
   if [[ -z "$cid" ]]; then
-    echo "не запущен"
+    echo "не поднялся: контейнера нет"
     return 1
   fi
   state=$(docker inspect -f '{{.State.Running}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid")
   read -r running restarts health <<<"$state"
-  if [[ "$running" != "true" || "$restarts" != "0" || "$health" == "unhealthy" ]]; then
-    echo "не поднялся (running=$running, перезапусков $restarts${health:+, health $health})"
+  if [[ "$running" != "true" ]]; then
+    echo "не поднялся: контейнер остановился"
+    return 1
+  elif [[ "$restarts" != "0" ]]; then
+    echo "не поднялся: падает и перезапускается (уже $restarts раз)"
+    return 1
+  elif [[ "$health" == "unhealthy" ]]; then
+    echo "не поднялся: не отвечает на проверку здоровья"
     return 1
   fi
   echo "работает${health:+, health $health}"
@@ -133,17 +167,23 @@ image_of() {
 }
 
 update_stack() {
-  local stack=$1 env_file=$2 svc old_id new_id result report=() failed=0 existing=()
+  local stack=$1 env_file=$2 svc old_cid old_id new_id result report=() failed=0 existing=()
   # Скачиваются образы только тех сервисов, у которых уже есть контейнер. Новый сервис может ещё
   # не иметь образа в ghcr, и pull всего стека падал бы; новые скачивает launch_new по одному.
   # Без контейнеров compose печатает пустую строку: без фильтра pull получил бы сервис с пустым именем.
   mapfile -t existing < <(compose "$stack" "$env_file" ps -a --services | grep -v '^$')
   [[ ${#existing[@]} -gt 0 ]] || return 0
   if ! compose "$stack" "$env_file" pull --quiet "${existing[@]}" 2>"$STATE_DIR/pull-$stack.err"; then
-    fail_once "pull-$stack" "Стек $stack: не удалось скачать образы. $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
+    fail_once "pull-$stack" "📦 Не скачались образы стека $stack
+
+Обычно это нет интернета или ghcr не пускает (истёк токен docker login).
+Попробую снова через 5 минут и напишу, когда получится.
+
+Ошибка:
+$(tail -n 3 "$STATE_DIR/pull-$stack.err")"
     return 0
   fi
-  clear_fail "pull-$stack" "Стек $stack: образы снова скачиваются."
+  clear_fail "pull-$stack" "📦 Образы стека $stack снова скачиваются."
 
   local changes target reason flag from to
   changes=$(changed_services "$stack" "$env_file")
@@ -158,10 +198,12 @@ update_stack() {
       log "$svc: эта версия уже не поднялась, пропускаю"
       continue
     fi
+    old_cid=$(compose "$stack" "$env_file" ps -q "$svc")
     old_id=$(image_of "$stack" "$env_file" "$svc")
     from=$(short_version "$old_id")
     if has_db "$svc" && ! "$HOMELAB_DIR/scripts/backup.sh" "$svc" pre-update; then
-      report+=("$svc: не обновлён — не удалось сделать копию базы")
+      report+=("❌ $svc не обновлён: не сделалась копия базы
+   👉 Проверь диск копий: journalctl -u homelab-update -n 50")
       history "$stack" "$svc" "$from" "$from" fail "$reason" "не удалось сделать копию базы"
       echo "$target" >"$flag"
       failed=1
@@ -169,21 +211,32 @@ update_stack() {
     fi
     # --no-deps: пересоздаётся только этот сервис, его зависимости не трогаются.
     if ! compose "$stack" "$env_file" up -d --no-deps "$svc"; then
-      report+=("$svc: ошибка docker compose up, см. journalctl -u homelab-update")
+      report+=("❌ $svc: docker compose up завершился с ошибкой
+   👉 Подробности: journalctl -u homelab-update -n 50")
       history "$stack" "$svc" "$from" "$from" fail "$reason" "ошибка docker compose up"
       echo "$target" >"$flag"
       failed=1
+      continue
+    fi
+    # Контейнер тот же — compose не нашёл, что менять: сервис уже такой, как нужно. Не о чем сообщать.
+    if [[ "$(compose "$stack" "$env_file" ps -q "$svc")" == "$old_cid" ]]; then
+      log "$svc: compose не пересоздал контейнер ($reason), запоминаю текущее состояние"
+      applied_set "$stack" "$svc" "$target"
       continue
     fi
     sleep "$CHECK_DELAY"
     new_id=$(image_of "$stack" "$env_file" "$svc")
     to=$(short_version "${new_id:-$old_id}")
     if result=$(verify "$stack" "$env_file" "$svc"); then
-      report+=("$svc: $from → $to, $result")
+      applied_set "$stack" "$svc" "$target"
+      report+=("$(done_line "$svc" "$from" "$to")")
       history "$stack" "$svc" "$from" "$to" ok "$reason" "$result"
       rm -f "$flag"
     else
-      report+=("$svc: $result
+      report+=("❌ $svc $result
+   Эту версию больше ставить не буду: жду новую сборку или правку.
+   👉 Откатить: панель, экран «Доставки». Лог: /logs $svc
+Последние строки лога:
 $(docker logs --tail 20 "$svc" 2>&1)")
       history "$stack" "$svc" "$from" "$to" fail "$reason" "$result"
       echo "$target" >"$flag"
@@ -193,9 +246,10 @@ $(docker logs --tail 20 "$svc" 2>&1)")
 
   [[ ${#report[@]} -gt 0 ]] || return 0
 
-  local title="Обновление $stack" event=update-ok
-  [[ $failed -eq 0 ]] || title="Обновление $stack с ошибками" event=update-fail
+  local title="🚀 Обновил сервисы ($stack)" event=update-ok
+  [[ $failed -eq 0 ]] || title="💥 Обновление $stack: не всё прошло" event=update-fail
   notify "$title
+
 $(printf '%s\n' "${report[@]}")" "$event"
 }
 
@@ -237,7 +291,8 @@ prepare_new() {
     fi
     cname=$(jq -r --arg s "$svc" '.services[$s].container_name // empty' <<<"$model")
     if [[ -n "$cname" ]] && other=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$cname" 2>/dev/null); then
-      fail_once "name-$svc" "$svc не установлен: уже есть контейнер $cname${other:+ из проекта $other}. Убери его или переименуй сервис."
+      fail_once "name-$svc" "⚠️ $svc не установлен: контейнер $cname уже есть${other:+ (проект $other)}
+👉 Удали старый (docker rm -f $cname) или переименуй сервис в compose."
       continue
     fi
     rm -f "$STATE_DIR/failed-name-$svc"
@@ -247,14 +302,16 @@ prepare_new() {
         <<<"$model" >/dev/null; then
       # В подоболочке: die внутри не должен оборвать обновление остальных сервисов.
       if ! (install_service "$svc"); then
-        fail_once "install-$svc" "$svc: не удалось подготовить каталоги, см. journalctl -u homelab-update"
+        fail_once "install-$svc" "⚠️ $svc не установлен: не смог создать каталоги и файл секретов
+👉 Подробности: journalctl -u homelab-update -n 50"
         continue
       fi
     fi
     if llm_clients | grep -qx "$svc"; then
       gw_env=$(secrets_file llm-gateway)
       if [[ -w "$gw_env" && -z "$(env_get "$(llm_var "$svc")" "$gw_env")" ]] && ! (llm_key "$svc"); then
-        fail_once "install-$svc" "$svc: не удалось выдать ключ шлюза, см. journalctl -u homelab-update"
+        fail_once "install-$svc" "⚠️ $svc не установлен: не смог выдать ему ключ шлюза LLM
+👉 Подробности: journalctl -u homelab-update -n 50"
         continue
       fi
     fi
@@ -269,17 +326,25 @@ gateway_ready() {
   local cid have
   cid=$(compose platform "$HOMELAB_ENV" ps -q llm-gateway)
   [[ -n "$cid" ]] || return 0
-  have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+  have=$(applied_get platform llm-gateway)
+  have=${have##*-}
+  [[ -n "$have" ]] || have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
   [[ "$have" == "$(want_hash platform "$HOMELAB_ENV" llm-gateway)" ]]
 }
 
 # launch_new STACK ENV — запустить подготовленные новые сервисы, у которых заполнены обязательные ключи.
 launch_new() {
-  local stack=$1 env_file=$2 svc missing target flag new_id version result
+  local stack=$1 env_file=$2 svc missing keys target flag new_id version result
   for svc in "${NEW_SERVICES[@]}"; do
     mapfile -t missing < <(missing_keys "$svc")
     if [[ ${#missing[@]} -gt 0 ]]; then
-      fail_once "wait-$svc" "$svc приехал, жду ${missing[*]}: $(secrets_hint "$svc")"
+      keys=$(printf '%s, ' "${missing[@]}")
+      fail_once "wait-$svc" "📥 Приехал новый сервис $svc
+
+Чтобы он запустился, заполни секреты: ${keys%, }
+👉 $(secrets_hint "$svc")
+
+После сохранения запущу его сам и напишу."
       continue
     fi
     rm -f "$STATE_DIR/failed-wait-$svc"
@@ -293,14 +358,16 @@ launch_new() {
       continue
     fi
     target="$(docker image inspect -f '{{.Id}}' "$(compose "$stack" "$env_file" config --format json |
-      jq -r --arg s "$svc" '.services[$s].image')" 2>/dev/null)-$(want_hash "$stack" "$env_file" "$svc")"
+      jq -r --arg s "$svc" '.services[$s].image')" 2>/dev/null)"
+    target="${target#sha256:}-$(want_hash "$stack" "$env_file" "$svc")"
     flag="$STATE_DIR/failed-target-$svc"
     if [[ "$(cat "$flag" 2>/dev/null)" == "$target" ]]; then
       log "$svc: эта версия уже не поднялась, жду новую сборку или правку"
       continue
     fi
     if ! compose "$stack" "$env_file" up -d --no-deps "$svc"; then
-      notify "$svc: установка не удалась, ошибка docker compose up. См. journalctl -u homelab-update" update-fail
+      notify "💥 $svc не установился: docker compose up завершился с ошибкой
+👉 Подробности: journalctl -u homelab-update -n 50" update-fail
       history "$stack" "$svc" "" "" fail install "ошибка docker compose up"
       echo "$target" >"$flag"
       continue
@@ -309,11 +376,16 @@ launch_new() {
     new_id=$(image_of "$stack" "$env_file" "$svc")
     version=$(short_version "$new_id")
     if result=$(verify "$stack" "$env_file" "$svc"); then
-      notify "$svc установлен, $version, $result" update-ok
+      applied_set "$stack" "$svc" "$target"
+      notify "🎉 Установил новый сервис $svc
+
+✅ Работает, версия $version" update-ok
       history "$stack" "$svc" "" "$version" ok install "$result"
       rm -f "$flag"
     else
-      notify "$svc: установка не удалась, $result
+      notify "💥 $svc установлен, но $result
+👉 Проверь секреты: $(secrets_hint "$svc")
+Последние строки лога:
 $(docker logs --tail 20 "$svc" 2>&1)" update-fail
       history "$stack" "$svc" "" "$version" fail install "$result"
       echo "$target" >"$flag"
@@ -331,7 +403,8 @@ check_orphans() {
     [[ -n "$svc" ]] || continue
     jq -e --arg s "$svc" '.services | has($s)' <<<"$model" >/dev/null && continue
     orphans+=("$svc")
-    fail_once "orphan-$svc" "$svc убран из compose $stack, контейнер остался. Удалить: docker rm -f $svc"
+    fail_once "orphan-$svc" "🧹 $svc убран из compose $stack, а контейнер остался и работает
+👉 Если он больше не нужен: docker rm -f $svc"
   done < <(docker ps -a --filter "label=com.docker.compose.project=$project" \
     --format '{{.Label "com.docker.compose.service"}}')
   for flag in "$STATE_DIR"/failed-orphan-*; do
@@ -346,9 +419,12 @@ main() {
   case "$POLICY" in auto|nightly|all) ;; *) die "политика: auto, nightly или all" ;; esac
 
   if git -C "$HOMELAB_DIR" pull --ff-only --quiet 2>"$STATE_DIR/git.err"; then
-    clear_fail git "homelab: git pull снова работает."
+    clear_fail git "✅ git pull снова работает, compose-файлы свежие."
   else
-    fail_once git "homelab: git pull не прошёл, работаю со старыми compose-файлами. $(tail -n 2 "$STATE_DIR/git.err")"
+    fail_once git "⚠️ git pull не прошёл: работаю со старыми compose-файлами
+👉 Проверь на сервере: cd /opt/homelab && git status
+Ошибка:
+$(tail -n 2 "$STATE_DIR/git.err")"
   fi
 
   local entry stack policy env_file
