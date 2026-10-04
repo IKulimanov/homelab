@@ -81,11 +81,19 @@ want_hash() {
   compose "$1" "$2" config --hash "$3" | awk '{print $2}'
 }
 
+# Цель сервиса — «id образа-хэш конфигурации», которую update.sh поставил или застал последней. Сравнение идёт
+# с ней, а не с меткой контейнера: метка com.docker.compose.config-hash и .Image контейнера не всегда совпадают
+# с тем, что печатают config --hash и image inspect (зависит от версии compose и хранилища образов). Тогда
+# сервис считался бы изменённым на каждом прогоне: копия базы и сообщение «обновлено» каждые 5 минут.
+APPLIED_DIR="$STATE_DIR/applied"
+applied_get() { cat "$APPLIED_DIR/$1-$2" 2>/dev/null || true; }
+applied_set() { mkdir -p "$APPLIED_DIR" && echo "$3" >"$APPLIED_DIR/$1-$2"; }
+
 # changed_services STACK ENV — сервисы, у которых запущен контейнер и он отличается от нужного:
 # другой образ (вышла новая версия, сменился тег) или другая конфигурация (правка compose.yaml, секретов).
 # Печатает строки «сервис цель причина», где цель — образ и хэш конфигурации, на которые нужно перейти.
 changed_services() {
-  local stack=$1 env_file=$2 model svc cid want_image want_id have_id want have reason
+  local stack=$1 env_file=$2 model svc cid want_image want_id have_id want have target applied reason
   # Образ берётся из полной модели: config --images с именем сервиса печатает и образы его зависимостей.
   model=$(compose "$stack" "$env_file" config --format json)
   for svc in $(jq -r '.services | keys[]' <<<"$model"); do
@@ -93,13 +101,24 @@ changed_services() {
     [[ -n "$cid" ]] || continue
     want_image=$(jq -r --arg s "$svc" '.services[$s].image' <<<"$model")
     want_id=$(docker image inspect -f '{{.Id}}' "$want_image" 2>/dev/null || true)
-    have_id=$(docker inspect -f '{{.Image}}' "$cid")
+    want_id=${want_id#sha256:}
     want=$(want_hash "$stack" "$env_file" "$svc")
-    have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+    target="$want_id-$want"
+    applied=$(applied_get "$stack" "$svc")
     reason=""
-    [[ -n "$want_id" && "$want_id" != "$have_id" ]] && reason=image
-    [[ "$want" != "$have" ]] && reason=${reason:+$reason+}config
-    [[ -z "$reason" ]] || echo "$svc ${want_id#sha256:}-$want $reason"
+    if [[ -n "$applied" ]]; then
+      [[ "$applied" == "$target" ]] && continue
+      [[ -n "$want_id" && "${applied%-*}" != "$want_id" ]] && reason=image
+      [[ "${applied##*-}" != "$want" ]] && reason=${reason:+$reason+}config
+    else
+      # Первый прогон после установки: записанной цели ещё нет, сравнение с самим контейнером.
+      have_id=$(docker inspect -f '{{.Image}}' "$cid")
+      have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+      [[ -n "$want_id" && "$want_id" != "${have_id#sha256:}" ]] && reason=image
+      [[ "$want" != "$have" ]] && reason=${reason:+$reason+}config
+      [[ -n "$reason" ]] || applied_set "$stack" "$svc" "$target"
+    fi
+    [[ -z "$reason" ]] || echo "$svc $target $reason"
   done
 }
 
@@ -133,7 +152,7 @@ image_of() {
 }
 
 update_stack() {
-  local stack=$1 env_file=$2 svc old_id new_id result report=() failed=0 existing=()
+  local stack=$1 env_file=$2 svc old_cid old_id new_id result report=() failed=0 existing=()
   # Скачиваются образы только тех сервисов, у которых уже есть контейнер. Новый сервис может ещё
   # не иметь образа в ghcr, и pull всего стека падал бы; новые скачивает launch_new по одному.
   # Без контейнеров compose печатает пустую строку: без фильтра pull получил бы сервис с пустым именем.
@@ -158,6 +177,7 @@ update_stack() {
       log "$svc: эта версия уже не поднялась, пропускаю"
       continue
     fi
+    old_cid=$(compose "$stack" "$env_file" ps -q "$svc")
     old_id=$(image_of "$stack" "$env_file" "$svc")
     from=$(short_version "$old_id")
     if has_db "$svc" && ! "$HOMELAB_DIR/scripts/backup.sh" "$svc" pre-update; then
@@ -175,10 +195,17 @@ update_stack() {
       failed=1
       continue
     fi
+    # Контейнер тот же — compose не нашёл, что менять: сервис уже такой, как нужно. Не о чем сообщать.
+    if [[ "$(compose "$stack" "$env_file" ps -q "$svc")" == "$old_cid" ]]; then
+      log "$svc: compose не пересоздал контейнер ($reason), запоминаю текущее состояние"
+      applied_set "$stack" "$svc" "$target"
+      continue
+    fi
     sleep "$CHECK_DELAY"
     new_id=$(image_of "$stack" "$env_file" "$svc")
     to=$(short_version "${new_id:-$old_id}")
     if result=$(verify "$stack" "$env_file" "$svc"); then
+      applied_set "$stack" "$svc" "$target"
       report+=("$svc: $from → $to, $result")
       history "$stack" "$svc" "$from" "$to" ok "$reason" "$result"
       rm -f "$flag"
@@ -269,7 +296,9 @@ gateway_ready() {
   local cid have
   cid=$(compose platform "$HOMELAB_ENV" ps -q llm-gateway)
   [[ -n "$cid" ]] || return 0
-  have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
+  have=$(applied_get platform llm-gateway)
+  have=${have##*-}
+  [[ -n "$have" ]] || have=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")
   [[ "$have" == "$(want_hash platform "$HOMELAB_ENV" llm-gateway)" ]]
 }
 
@@ -293,7 +322,8 @@ launch_new() {
       continue
     fi
     target="$(docker image inspect -f '{{.Id}}' "$(compose "$stack" "$env_file" config --format json |
-      jq -r --arg s "$svc" '.services[$s].image')" 2>/dev/null)-$(want_hash "$stack" "$env_file" "$svc")"
+      jq -r --arg s "$svc" '.services[$s].image')" 2>/dev/null)"
+    target="${target#sha256:}-$(want_hash "$stack" "$env_file" "$svc")"
     flag="$STATE_DIR/failed-target-$svc"
     if [[ "$(cat "$flag" 2>/dev/null)" == "$target" ]]; then
       log "$svc: эта версия уже не поднялась, жду новую сборку или правку"
@@ -309,6 +339,7 @@ launch_new() {
     new_id=$(image_of "$stack" "$env_file" "$svc")
     version=$(short_version "$new_id")
     if result=$(verify "$stack" "$env_file" "$svc"); then
+      applied_set "$stack" "$svc" "$target"
       notify "$svc установлен, $version, $result" update-ok
       history "$stack" "$svc" "" "$version" ok install "$result"
       rm -f "$flag"
