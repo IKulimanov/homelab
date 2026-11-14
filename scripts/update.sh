@@ -164,7 +164,9 @@ verify() {
 image_of() {
   local cid
   cid=$(compose "$1" "$2" ps -q "$3")
-  [[ -n "$cid" ]] && docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true
+  if [[ -n "$cid" ]]; then
+    docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true
+  fi
 }
 
 # recreate STACK ENV SVC OLD_CID REASON — пересоздать сервис. compose не всегда видит правку содержимого env_file:
