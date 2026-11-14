@@ -4,7 +4,8 @@ Jellyfin с автоматической загрузкой: qBittorrent кач�
 сериалами и фильмами, Bazarr подбирает субтитры, Jellyseerr принимает запросы.
 Compose-проект `media-stack`, файл `stacks/media/compose.yaml`, переменные `/srv/secrets/media.env`.
 
-Обновление — `update.sh nightly` в 4:00, образы `:latest` от linuxserver и авторов приложений.
+Обновление — только по `/update` в служебном боте (`update.sh all`), образы `:latest` от linuxserver и авторов
+приложений. Сам медиастек не обновляется: свежий `:latest` может принести миграцию, откатиться с которой нельзя.
 
 ## Адреса
 

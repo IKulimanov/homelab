@@ -13,13 +13,13 @@ APP_UID=65532
 GATEWAY_URL=http://llm-gateway:8080
 
 # Стеки: каталог в stacks/, политика обновления, файл переменных для подстановки в compose.
-# auto — проверка раз в 5 минут, nightly — в 4:00. Политика задаётся здесь, а не меткой в compose:
-# новая метка у сервиса медиастека пересоздала бы его контейнер.
+# Сами стеки не обновляются. auto — кнопка «Обновить сейчас» в панели и /update в боте, manual — только /update.
+# Политика задаётся здесь, а не меткой в compose: новая метка у сервиса медиастека пересоздала бы его контейнер.
 # shellcheck disable=SC2034 # используется в скриптах, которые подключают lib.sh
 STACKS=(
   "platform auto $HOMELAB_ENV"
   "apps auto $HOMELAB_ENV"
-  "media nightly $SECRETS_DIR/media.env"
+  "media manual $SECRETS_DIR/media.env"
 )
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
@@ -89,6 +89,27 @@ notify() {
   curl -fsS --max-time 15 -o /dev/null "$api/sendMessage" \
     --data-urlencode "chat_id=${chat}" --data-urlencode "text=${text}" \
     -d disable_web_page_preview=true || log "не удалось отправить уведомление"
+}
+
+# drop_auto_timers — выключить и удалить старые таймеры обновления: «раз в 5 минут» и ночной медиастека.
+# Образы теперь скачиваются только по кнопке: таймеры слали сообщение о каждом сбое сети или реестра.
+# Успех — хотя бы один таймер был и удалён; их описания — в DROPPED_TIMERS.
+DROPPED_TIMERS=()
+drop_auto_timers() {
+  local name unit dir=/etc/systemd/system
+  DROPPED_TIMERS=()
+  for name in homelab-update homelab-update-nightly; do
+    [[ -e "$dir/$name.timer" || -e "$dir/$name.service" ]] || continue
+    systemctl disable --now "$name.timer" >/dev/null 2>&1 || true
+    # Сервис не останавливается: это может быть сам текущий прогон update.sh.
+    for unit in "$name.timer" "$name.service"; do rm -f "$dir/$unit"; done
+    case "$name" in
+      homelab-update) DROPPED_TIMERS+=("проверку обновлений раз в 5 минут") ;;
+      *) DROPPED_TIMERS+=("ночное обновление медиастека в 4:00") ;;
+    esac
+  done
+  [[ ${#DROPPED_TIMERS[@]} -gt 0 ]] || return 1
+  systemctl daemon-reload
 }
 
 # short_version IMAGE_ID — версия образа для людей: sha из метки сборки, иначе версия из метки, иначе начало id.
@@ -264,6 +285,6 @@ llm_key() {
     grep -q "^  base_url: $GATEWAY_URL" "$cfg" || die "не удалось вписать gemini.base_url в $cfg, впиши руками"
     log "$cfg: gemini.base_url=$GATEWAY_URL"
   fi
-  # Изменённый env_file меняет хэш конфигурации: update.sh сам пересоздаст оба контейнера, шлюз первым.
-  log "контейнеры llm-gateway и $svc пересоздаст update.sh в течение 5 минут; сразу — scripts/update.sh auto"
+  # Изменённый env_file меняет хэш конфигурации: update.sh пересоздаст оба контейнера, шлюз первым.
+  log "контейнеры llm-gateway и $svc пересоздаст update.sh: «Обновить сейчас» в панели, /update в боте или scripts/update.sh auto"
 }

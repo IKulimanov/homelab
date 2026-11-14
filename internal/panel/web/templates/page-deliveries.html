@@ -2,7 +2,7 @@
 <header class="head">
   <div>
     <h1>Доставки</h1>
-    <p>Что, когда и с какой версии на какую привёз update.sh. Каждые 5 минут, медиастек — ночью.</p>
+    <p>Что, когда и с какой версии на какую привёз update.sh. По кнопке «Обновить сейчас» или /update в боте, медиастек — только по /update.</p>
   </div>
   <form method="post" action="/update"><input type="hidden" name="back" value="/deliveries"><button class="btn orange" type="submit" {{if $v.Running}}disabled{{end}}>Обновить сейчас</button></form>
 </header>

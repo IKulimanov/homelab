@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Обновление сервисов: забрать новые образы и конфиги, пересоздать только изменившиеся контейнеры.
-#   update.sh auto     — стеки с политикой auto (таймер раз в 5 минут)
-#   update.sh nightly  — стеки с политикой nightly (таймер в 4:00)
-#   update.sh all      — все стеки (команда /update)
+#   update.sh auto     — стеки с политикой auto (панель: «Обновить сейчас», сохранение секрета, откат)
+#   update.sh all      — все стеки, и медиастек тоже (команда /update)
+# Таймеров нет: образы скачиваются только по кнопке. Проверка раз в 5 минут и ночное обновление
+# слали сообщение о каждом сбое сети или реестра.
 # Остановленный сервис не запускается: если его остановили руками, так и задумано.
 # Перед пересозданием сервиса с базой снимается копия: миграции новых версий необратимы.
 # В стеках с политикой auto новый сервис из compose ставится сам: каталоги, секреты из образца, ключ шлюза;
@@ -19,7 +20,7 @@ HISTORY="$STATE_DIR/history.jsonl"
 HISTORY_DAYS=90
 mkdir -p "$STATE_DIR"
 
-# Два запуска одновременно (таймер и /update) делали бы одно и то же дважды.
+# Два запуска одновременно (панель и /update) делали бы одно и то же дважды.
 exec 9>"$STATE_DIR/update.lock"
 if [[ "$LOCK_WAIT" -gt 0 ]]; then
   flock -w "$LOCK_WAIT" 9 || { log "обновление идёт дольше $LOCK_WAIT с, выхожу"; exit 1; }
@@ -39,7 +40,7 @@ last_run null null
 trap 'last_run "$(date +%s)" "$?"' EXIT
 
 # fail_once KEY TEXT — сообщить о сбое один раз, пока он не пройдёт. Без этого обрыв интернета
-# давал бы сообщение каждые 5 минут.
+# давал бы сообщение на каждом прогоне.
 fail_once() {
   local text=$2 flag="$STATE_DIR/failed-$1"
   log "ошибка: $text"
@@ -84,7 +85,7 @@ want_hash() {
 # Цель сервиса — «id образа-хэш конфигурации», которую update.sh поставил или застал последней. Сравнение идёт
 # с ней, а не с меткой контейнера: метка com.docker.compose.config-hash и .Image контейнера не всегда совпадают
 # с тем, что печатают config --hash и image inspect (зависит от версии compose и хранилища образов). Тогда
-# сервис считался бы изменённым на каждом прогоне: копия базы и сообщение «обновлено» каждые 5 минут.
+# сервис считался бы изменённым на каждом прогоне: копия базы и сообщение «обновлено» при каждом нажатии.
 APPLIED_DIR="$STATE_DIR/applied"
 applied_get() { cat "$APPLIED_DIR/$1-$2" 2>/dev/null || true; }
 applied_set() { mkdir -p "$APPLIED_DIR" && echo "$3" >"$APPLIED_DIR/$1-$2"; }
@@ -186,16 +187,18 @@ update_stack() {
   mapfile -t existing < <(compose "$stack" "$env_file" ps -a --services | grep -v '^$')
   [[ ${#existing[@]} -gt 0 ]] || return 0
   if ! compose "$stack" "$env_file" pull --quiet "${existing[@]}" 2>"$STATE_DIR/pull-$stack.err"; then
-    fail_once "pull-$stack" "📦 Не скачались образы стека $stack
+    # Запуск всегда по кнопке: человек ждёт итога, поэтому сообщение на каждый сбой.
+    notify "📦 Не скачались образы стека $stack, он не обновлён
 
-Обычно это нет интернета или ghcr не пускает (истёк токен docker login).
-Попробую снова через 5 минут и напишу, когда получится.
+Обычно это нет интернета или реестр не пускает (для ghcr — истёк токен docker login).
+👉 Нажми «Обновить сейчас» в панели или /update ещё раз позже.
 
 Ошибка:
 $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
     return 0
   fi
-  clear_fail "pull-$stack" "📦 Образы стека $stack снова скачиваются."
+  # Флаг от старых таймеров: сбой отмечался, чтобы не повторять сообщение.
+  rm -f "$STATE_DIR/failed-pull-$stack"
 
   local changes target reason flag from to
   changes=$(changed_services "$stack" "$env_file")
@@ -203,8 +206,8 @@ $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
 
   # Список читается из fd 3: docker и sqlite3 внутри цикла не должны съесть его со stdin.
   while read -r svc target reason <&3; do
-    # Цель, на которой сервис уже не поднялся, повторно не ставится: иначе каждые 5 минут были бы
-    # новая копия базы, пересоздание и сообщение. Следующая попытка — с новой сборкой или правкой compose.
+    # Цель, на которой сервис уже не поднялся, повторно не ставится: иначе каждое нажатие давало бы
+    # новую копию базы, пересоздание и сообщение. Следующая попытка — с новой сборкой или правкой compose.
     flag="$STATE_DIR/failed-target-$svc"
     if [[ "$(cat "$flag" 2>/dev/null)" == "$target" ]]; then
       log "$svc: эта версия уже не поднялась, пропускаю"
@@ -215,7 +218,7 @@ $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
     from=$(short_version "$old_id")
     if has_db "$svc" && ! "$HOMELAB_DIR/scripts/backup.sh" "$svc" pre-update; then
       report+=("❌ $svc не обновлён: не сделалась копия базы
-   👉 Проверь диск копий: journalctl -u homelab-update -n 50")
+   👉 Проверь диск копий: journalctl -t update.sh -n 50")
       history "$stack" "$svc" "$from" "$from" fail "$reason" "не удалось сделать копию базы"
       echo "$target" >"$flag"
       failed=1
@@ -224,7 +227,7 @@ $(tail -n 3 "$STATE_DIR/pull-$stack.err")"
     # --no-deps: пересоздаётся только этот сервис, его зависимости не трогаются.
     if ! recreate "$stack" "$env_file" "$svc" "$old_cid" "$reason"; then
       report+=("❌ $svc: docker compose up завершился с ошибкой
-   👉 Подробности: journalctl -u homelab-update -n 50")
+   👉 Подробности: journalctl -t update.sh -n 50")
       history "$stack" "$svc" "$from" "$from" fail "$reason" "ошибка docker compose up"
       echo "$target" >"$flag"
       failed=1
@@ -315,7 +318,7 @@ prepare_new() {
       # В подоболочке: die внутри не должен оборвать обновление остальных сервисов.
       if ! (install_service "$svc"); then
         fail_once "install-$svc" "⚠️ $svc не установлен: не смог создать каталоги и файл секретов
-👉 Подробности: journalctl -u homelab-update -n 50"
+👉 Подробности: journalctl -t update.sh -n 50"
         continue
       fi
     fi
@@ -323,7 +326,7 @@ prepare_new() {
       gw_env=$(secrets_file llm-gateway)
       if [[ -w "$gw_env" && -z "$(env_get "$(llm_var "$svc")" "$gw_env")" ]] && ! (llm_key "$svc"); then
         fail_once "install-$svc" "⚠️ $svc не установлен: не смог выдать ему ключ шлюза LLM
-👉 Подробности: journalctl -u homelab-update -n 50"
+👉 Подробности: journalctl -t update.sh -n 50"
         continue
       fi
     fi
@@ -364,9 +367,15 @@ launch_new() {
       log "$svc: жду, пока шлюз применит его ключ"
       continue
     fi
-    # Сборка в ghcr могла ещё не закончиться: только запись в журнал, следующая попытка через 5 минут.
+    # Сборка в ghcr могла ещё не закончиться. Запуск всегда по кнопке: сообщить, чтобы нажали позже.
     if ! compose "$stack" "$env_file" pull --quiet "$svc" 2>"$STATE_DIR/pull-$svc.err"; then
-      log "$svc: образ не скачался, попробую позже: $(tail -n 1 "$STATE_DIR/pull-$svc.err")"
+      notify "📦 Не скачался образ нового сервиса $svc, он не установлен
+
+Обычно сборка в GitHub Actions ещё не закончилась, нет интернета или ghcr не пускает.
+👉 Нажми «Обновить сейчас» в панели или /update ещё раз позже.
+
+Ошибка:
+$(tail -n 3 "$STATE_DIR/pull-$svc.err")"
       continue
     fi
     target="$(docker image inspect -f '{{.Id}}' "$(compose "$stack" "$env_file" config --format json |
@@ -379,7 +388,7 @@ launch_new() {
     fi
     if ! compose "$stack" "$env_file" up -d --no-deps "$svc"; then
       notify "💥 $svc не установился: docker compose up завершился с ошибкой
-👉 Подробности: journalctl -u homelab-update -n 50" update-fail
+👉 Подробности: journalctl -t update.sh -n 50" update-fail
       history "$stack" "$svc" "" "" fail install "ошибка docker compose up"
       echo "$target" >"$flag"
       continue
@@ -428,7 +437,20 @@ check_orphans() {
 
 main() {
   [[ $EUID -eq 0 ]] || die "нужен root"
-  case "$POLICY" in auto|nightly|all) ;; *) die "политика: auto, nightly или all" ;; esac
+
+  # Сервер со старой установкой: таймеры ещё стоят. Новый update.sh приезжает git pull-ом и выключает их
+  # на первом же прогоне. Прогон от самого таймера на этом заканчивается: ничего не качает. Поэтому
+  # проверка политики после: старый ночной таймер запускает update.sh nightly.
+  if drop_auto_timers; then
+    notify "🔕 Выключил $(printf '%s и ' "${DROPPED_TIMERS[@]}" | sed 's/ и $//'). Сам больше ничего не обновляю.
+
+Обновить: «Обновить сейчас» в панели (свои сервисы) или /update в боте (всё, и медиастек)."
+    if grep -qE '/homelab-update(-nightly)?\.service$' /proc/self/cgroup 2>/dev/null; then
+      log "прогон от старого таймера: таймеры выключены, обновление не запускаю"
+      exit 0
+    fi
+  fi
+  case "$POLICY" in auto|all) ;; *) die "политика: auto или all" ;; esac
 
   if git -C "$HOMELAB_DIR" pull --ff-only --quiet 2>"$STATE_DIR/git.err"; then
     clear_fail git "✅ git pull снова работает, compose-файлы свежие."

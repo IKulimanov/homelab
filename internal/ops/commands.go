@@ -260,6 +260,7 @@ func (s *Service) cmdLogs(ctx context.Context, args []string) Reply {
 }
 
 // cmdUpdate кладёт файл-триггер; homelab-update.path на хосте видит его и запускает update.sh all.
+// Сами свои сервисы не обновляются: это одна из двух кнопок, вторая — «Обновить сейчас» в панели.
 func (s *Service) cmdUpdate() Reply {
 	if s.cfg.TriggerPath == "" {
 		return Reply{Text: "⚠️ Не знаю, как запустить обновление: не задан OPS_TRIGGER."}
