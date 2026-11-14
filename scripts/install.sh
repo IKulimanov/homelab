@@ -4,7 +4,6 @@
 #                                   каталоги ops-bot, llm-gateway и panel
 #   install.sh service <svc>      — каталоги сервиса: /srv/<svc>/data и /srv/secrets/<svc>.env из образца
 #   install.sh llm-key <svc>      — новый ключ шлюза для сервиса: в /srv/secrets/llm-gateway.env и в <svc>.env
-#   install.sh enable-nightly     — включить ночное обновление медиастека (только после удаления Watchtower)
 # Новые сервисы из compose ставит сам update.sh; service и llm-key — для ручного запуска.
 # Docker и его настройки скрипт не трогает: перезапуск dockerd остановил бы медиастек.
 set -euo pipefail
@@ -72,12 +71,13 @@ install_base() {
   for unit in "$HOMELAB_DIR"/systemd/*; do
     install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
   done
-  # Старый таймер «проверка раз в 5 минут»: образы теперь скачиваются только по кнопке.
-  drop_auto_timer && log "таймер обновления раз в 5 минут выключен и удалён"
+  # Старые таймеры обновления: образы теперь скачиваются только по кнопке.
+  if drop_auto_timers; then
+    log "выключено и удалено: $(printf '%s, ' "${DROPPED_TIMERS[@]}" | sed 's/, $//')"
+  fi
   systemctl daemon-reload
   systemctl enable --now homelab-backup.timer homelab-update.path homelab-apply.path homelab-backup-now.path
   log "бэкап в 3:30 включён; обновление — «Обновить сейчас» в панели, /update в боте или scripts/update.sh auto"
-  log "ночное обновление медиастека выключено до удаления Watchtower: install.sh enable-nightly"
 }
 
 main() {
@@ -86,13 +86,6 @@ main() {
     "") install_base ;;
     service) [[ -n "${2:-}" ]] || die "использование: install.sh service <svc>"; install_service "$2" ;;
     llm-key) [[ -n "${2:-}" ]] || die "использование: install.sh llm-key <svc>"; llm_key "$2" ;;
-    enable-nightly)
-      if docker ps -a --format '{{.Names}}' | grep -qx watchtower; then
-        die "контейнер watchtower ещё есть: два обновлятеля будут мешать друг другу"
-      fi
-      systemctl enable --now homelab-update-nightly.timer
-      log "ночное обновление включено"
-      ;;
     *) die "неизвестная команда: $1" ;;
   esac
 }

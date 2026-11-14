@@ -13,13 +13,13 @@ APP_UID=65532
 GATEWAY_URL=http://llm-gateway:8080
 
 # Стеки: каталог в stacks/, политика обновления, файл переменных для подстановки в compose.
-# auto — по кнопке «Обновить сейчас» в панели или /update в боте, nightly — в 4:00 и по /update.
+# Сами стеки не обновляются. auto — кнопка «Обновить сейчас» в панели и /update в боте, manual — только /update.
 # Политика задаётся здесь, а не меткой в compose: новая метка у сервиса медиастека пересоздала бы его контейнер.
 # shellcheck disable=SC2034 # используется в скриптах, которые подключают lib.sh
 STACKS=(
   "platform auto $HOMELAB_ENV"
   "apps auto $HOMELAB_ENV"
-  "media nightly $SECRETS_DIR/media.env"
+  "media manual $SECRETS_DIR/media.env"
 )
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
@@ -91,20 +91,24 @@ notify() {
     -d disable_web_page_preview=true || log "не удалось отправить уведомление"
 }
 
-# drop_auto_timer — выключить и удалить старый таймер «проверка раз в 5 минут». Образы теперь скачиваются
-# только по кнопке: таймер слал сообщение о каждом сбое сети или ghcr. Успех — таймер был и удалён.
-drop_auto_timer() {
-  local unit found=1
-  for unit in homelab-update.timer homelab-update.service; do
-    [[ -e "/etc/systemd/system/$unit" ]] || continue
-    found=0
+# drop_auto_timers — выключить и удалить старые таймеры обновления: «раз в 5 минут» и ночной медиастека.
+# Образы теперь скачиваются только по кнопке: таймеры слали сообщение о каждом сбое сети или реестра.
+# Успех — хотя бы один таймер был и удалён; их описания — в DROPPED_TIMERS.
+DROPPED_TIMERS=()
+drop_auto_timers() {
+  local name unit dir=/etc/systemd/system
+  DROPPED_TIMERS=()
+  for name in homelab-update homelab-update-nightly; do
+    [[ -e "$dir/$name.timer" || -e "$dir/$name.service" ]] || continue
+    systemctl disable --now "$name.timer" >/dev/null 2>&1 || true
     # Сервис не останавливается: это может быть сам текущий прогон update.sh.
-    if [[ "$unit" == *.timer ]]; then
-      systemctl disable --now "$unit" >/dev/null 2>&1 || true
-    fi
-    rm -f "/etc/systemd/system/$unit"
+    for unit in "$name.timer" "$name.service"; do rm -f "$dir/$unit"; done
+    case "$name" in
+      homelab-update) DROPPED_TIMERS+=("проверку обновлений раз в 5 минут") ;;
+      *) DROPPED_TIMERS+=("ночное обновление медиастека в 4:00") ;;
+    esac
   done
-  [[ $found -eq 0 ]] || return 1
+  [[ ${#DROPPED_TIMERS[@]} -gt 0 ]] || return 1
   systemctl daemon-reload
 }
 
