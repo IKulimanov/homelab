@@ -36,7 +36,7 @@ archive() {  # archive <имя> <путь>...
 ## Шаг 0. Подготовка и опись
 
 Установка homelab: [server-setup.md](server-setup.md). После неё на сервере есть `/opt/homelab`, сеть Docker
-`homelab` и таймеры обновления и бэкапа. Старым службам они не мешают: в `stacks/apps` пока нет ни одного
+`homelab` и таймер бэкапа. Старым службам они не мешают: в `stacks/apps` пока нет ни одного
 запущенного контейнера, а медиастек без `/srv/secrets/media.env` обновление пропускает.
 
 Опись:
@@ -62,11 +62,11 @@ mkdir -p /mnt/backup/legacy
    ([monitoring.md](monitoring.md)). В `/srv/secrets/llm-gateway.env` вписать `GEMINI_API_KEY` — настоящий ключ из
    AI Studio. Без него шлюз не запустится.
 
-2. Запуск. Руками не нужен: в течение 5 минут после заполнения ключей `update.sh` сам поднимет `ops-bot`,
-   `llm-gateway` и `dozzle` и пришлёт «… установлен». Медиастек и старые боты это не затрагивает. Не ждать:
+2. Запуск: `update.sh` поднимет `ops-bot`, `llm-gateway` и `dozzle` и пришлёт «… установлен». Медиастек и старые
+   боты это не затрагивает. Сам сервер обновление не запускает, поэтому руками:
 
    ```bash
-   sudo systemctl start homelab-update-now
+   sudo /opt/homelab/scripts/update.sh auto
    docker logs ops-bot          # «ops-bot запущен»; в чат бот при запуске не пишет
    docker logs llm-gateway      # «шлюз запущен»
    docker inspect -f '{{.State.Health.Status}}' llm-gateway    # healthy через полминуты
@@ -142,8 +142,8 @@ docker stop budget-bot && systemctl enable --now budget-bot
 пересоздаются и не перезапускаются.
 
 Пока шаг не закончен, не нажимать `/update` и не запускать `homelab-update-now`: с появлением `/srv/secrets/media.env` они
-обновляют и медиастек, и при несовпадении конфигурации пересоздали бы его контейнеры. Таймер раз в 5 минут
-медиастек не трогает.
+обновляют и медиастек, и при несовпадении конфигурации пересоздали бы его контейнеры. Кнопка «Обновить сейчас»
+в панели (`update.sh auto`) медиастек не трогает.
 
 1. Переменные медиастека — как есть, без правок:
 

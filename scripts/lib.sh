@@ -13,8 +13,8 @@ APP_UID=65532
 GATEWAY_URL=http://llm-gateway:8080
 
 # Стеки: каталог в stacks/, политика обновления, файл переменных для подстановки в compose.
-# auto — проверка раз в 5 минут, nightly — в 4:00. Политика задаётся здесь, а не меткой в compose:
-# новая метка у сервиса медиастека пересоздала бы его контейнер.
+# auto — по кнопке «Обновить сейчас» в панели или /update в боте, nightly — в 4:00 и по /update.
+# Политика задаётся здесь, а не меткой в compose: новая метка у сервиса медиастека пересоздала бы его контейнер.
 # shellcheck disable=SC2034 # используется в скриптах, которые подключают lib.sh
 STACKS=(
   "platform auto $HOMELAB_ENV"
@@ -89,6 +89,23 @@ notify() {
   curl -fsS --max-time 15 -o /dev/null "$api/sendMessage" \
     --data-urlencode "chat_id=${chat}" --data-urlencode "text=${text}" \
     -d disable_web_page_preview=true || log "не удалось отправить уведомление"
+}
+
+# drop_auto_timer — выключить и удалить старый таймер «проверка раз в 5 минут». Образы теперь скачиваются
+# только по кнопке: таймер слал сообщение о каждом сбое сети или ghcr. Успех — таймер был и удалён.
+drop_auto_timer() {
+  local unit found=1
+  for unit in homelab-update.timer homelab-update.service; do
+    [[ -e "/etc/systemd/system/$unit" ]] || continue
+    found=0
+    # Сервис не останавливается: это может быть сам текущий прогон update.sh.
+    if [[ "$unit" == *.timer ]]; then
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
+    rm -f "/etc/systemd/system/$unit"
+  done
+  [[ $found -eq 0 ]] || return 1
+  systemctl daemon-reload
 }
 
 # short_version IMAGE_ID — версия образа для людей: sha из метки сборки, иначе версия из метки, иначе начало id.
@@ -264,6 +281,6 @@ llm_key() {
     grep -q "^  base_url: $GATEWAY_URL" "$cfg" || die "не удалось вписать gemini.base_url в $cfg, впиши руками"
     log "$cfg: gemini.base_url=$GATEWAY_URL"
   fi
-  # Изменённый env_file меняет хэш конфигурации: update.sh сам пересоздаст оба контейнера, шлюз первым.
-  log "контейнеры llm-gateway и $svc пересоздаст update.sh в течение 5 минут; сразу — scripts/update.sh auto"
+  # Изменённый env_file меняет хэш конфигурации: update.sh пересоздаст оба контейнера, шлюз первым.
+  log "контейнеры llm-gateway и $svc пересоздаст update.sh: «Обновить сейчас» в панели, /update в боте или scripts/update.sh auto"
 }

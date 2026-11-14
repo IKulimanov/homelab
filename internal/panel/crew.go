@@ -165,7 +165,7 @@ func (s *Server) crewCards(ctx context.Context) ([]crewCard, error) {
 		if len(card.Missing) > 0 {
 			card.Cond = condition{Text: "ждёт секретов", Level: "warn"}
 		} else {
-			card.Cond = condition{Text: "ждёт установки: update.sh поставит его в течение 5 минут", Level: "warn"}
+			card.Cond = condition{Text: "ждёт установки: нажми «Обновить сейчас»", Level: "warn"}
 		}
 		cards = append(cards, card)
 	}

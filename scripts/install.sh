@@ -72,9 +72,11 @@ install_base() {
   for unit in "$HOMELAB_DIR"/systemd/*; do
     install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
   done
+  # Старый таймер «проверка раз в 5 минут»: образы теперь скачиваются только по кнопке.
+  drop_auto_timer && log "таймер обновления раз в 5 минут выключен и удалён"
   systemctl daemon-reload
-  systemctl enable --now homelab-update.timer homelab-backup.timer homelab-update.path homelab-apply.path homelab-backup-now.path
-  log "таймеры включены: обновление раз в 5 минут, бэкап в 3:30; кнопки панели «Применить» и «Заморозить» работают"
+  systemctl enable --now homelab-backup.timer homelab-update.path homelab-apply.path homelab-backup-now.path
+  log "бэкап в 3:30 включён; обновление — «Обновить сейчас» в панели, /update в боте или scripts/update.sh auto"
   log "ночное обновление медиастека выключено до удаления Watchtower: install.sh enable-nightly"
 }
 

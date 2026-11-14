@@ -14,7 +14,7 @@ docker compose version
 
 ## 2. Доступ к GitHub
 
-Сервер забирает с GitHub две вещи: репозиторий `homelab` (`git pull` раз в 5 минут) и образы сервисов из ghcr.io.
+Сервер забирает с GitHub две вещи: репозиторий `homelab` (`git pull` при каждом обновлении) и образы сервисов из ghcr.io.
 
 Репозиторий `homelab`. Секретов в нём нет, поэтому проще всего сделать его публичным, тогда `git clone` по https
 работает без ключей. Если он приватный, нужен deploy key только на чтение:
@@ -62,7 +62,6 @@ sudo /opt/homelab/scripts/install.sh
 - создаёт сеть Docker `homelab`: через неё боты ходят в шлюз. Работающие контейнеры это не трогает;
 - создаёт `/srv/ops-bot`, `/srv/llm-gateway`, `/srv/panel` и их файлы секретов;
 - ставит юниты systemd и включает:
-  - `homelab-update.timer` — проверка новых версий раз в 5 минут;
   - `homelab-backup.timer` — копии баз в 3:30;
   - `homelab-update.path` — обновление по команде `/update` из служебного бота;
   - `homelab-apply.path` — кнопки панели «Сохранить и применить», откат, «Обновить сейчас» (`update.sh auto`);
@@ -82,9 +81,14 @@ sudo /opt/homelab/scripts/install.sh
 В `/srv/secrets/llm-gateway.env` — `GEMINI_API_KEY`. Файлы `ops-bot` и `llm-gateway` `install.sh` уже создал.
 Править от root: `sudo nano /srv/secrets/homelab.env`. После установки панели правка идёт в её Сейфе.
 
-Дальше ничего запускать руками не нужно: в течение 5 минут `update.sh` поднимет стек `platform` (`ops-bot`,
-`llm-gateway`, `dozzle`, `panel`) и пришлёт «… установлен». Вход в панель — `/panel` в служебном боте,
-подробно в [panel.md](panel.md). Сервисы стека `apps` ставятся так же, кроме тех, у которых на
+Первый запуск — руками, дальше обновления идут кнопкой «Обновить сейчас» в панели или `/update` в боте:
+
+```bash
+sudo /opt/homelab/scripts/update.sh auto
+```
+
+`update.sh` поднимет стек `platform` (`ops-bot`, `llm-gateway`, `dozzle`, `panel`) и пришлёт «… установлен». Вход в панель — `/panel` в служебном боте,
+подробно в [panel.md](panel.md). Сервисы стека `apps` ставятся тем же запуском, кроме тех, у которых на
 сервере есть старая служба systemd с тем же именем: их переносит [migration.md](migration.md), чтобы не запустить
 второй экземпляр с пустой базой.
 
